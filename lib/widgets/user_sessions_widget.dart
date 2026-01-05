@@ -1,34 +1,54 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/sync_provider.dart';
 
 class UserSessionsWidget extends StatelessWidget {
   const UserSessionsWidget({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Dummy past user data
-    final pastUsers = [
-      {
-        'id': 'USR001',
-        'name': 'John Developer',
-        'firstLogin': DateTime.now().subtract(const Duration(days: 30)),
-        'lastLogin': DateTime.now().subtract(const Duration(hours: 2)),
-        'lastLogout': DateTime.now().subtract(const Duration(hours: 3)),
-      },
-      {
-        'id': 'USR002',
-        'name': 'Jane Tester',
-        'firstLogin': DateTime.now().subtract(const Duration(days: 15)),
-        'lastLogin': DateTime.now().subtract(const Duration(days: 1)),
-        'lastLogout': DateTime.now().subtract(const Duration(days: 1, hours: 2)),
-      },
-      {
-        'id': 'USR003',
-        'name': 'Mike Admin',
-        'firstLogin': DateTime.now().subtract(const Duration(days: 45)),
-        'lastLogin': DateTime.now().subtract(const Duration(hours: 24)),
-        'lastLogout': DateTime.now().subtract(const Duration(hours: 26)),
-      },
-    ];
+    // Real past user data from provider
+    final pastUsers = context.watch<SyncProvider>().pastSessions;
+
+    if (pastUsers.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withValues(alpha: 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Past User Sessions',
+              style: TextStyle(
+                color: Color(0xFF5E17EB),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Text(
+                  'No past sessions recorded locally.',
+                  style: TextStyle(color: Colors.grey[500]),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -55,7 +75,7 @@ class UserSessionsWidget extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          
+
           // Horizontal ScrollView for the table
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -82,7 +102,10 @@ class UserSessionsWidget extends StatelessWidget {
                         topRight: Radius.circular(16),
                       ),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     child: const Row(
                       children: [
                         SizedBox(
@@ -155,16 +178,19 @@ class UserSessionsWidget extends StatelessWidget {
                                 bottom: BorderSide(
                                   color: Colors.grey.shade200,
                                   width: 0.5,
+                                ),
                               ),
-                            ),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       child: Row(
                         children: [
                           SizedBox(
                             width: 80,
                             child: Text(
-                              user['id'] as String,
+                              user['id']?.toString() ?? '-',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.black87,
@@ -175,7 +201,7 @@ class UserSessionsWidget extends StatelessWidget {
                           SizedBox(
                             width: 120,
                             child: Text(
-                              user['name'] as String,
+                              user['name']?.toString() ?? '-',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.black87,
@@ -185,7 +211,7 @@ class UserSessionsWidget extends StatelessWidget {
                           SizedBox(
                             width: 150,
                             child: Text(
-                              _formatDateTime(user['firstLogin'] as DateTime),
+                              _formatDateTime(user['firstLogin']),
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.black87,
@@ -195,7 +221,7 @@ class UserSessionsWidget extends StatelessWidget {
                           SizedBox(
                             width: 150,
                             child: Text(
-                              _formatDateTime(user['lastLogin'] as DateTime),
+                              _formatDateTime(user['lastLogin']),
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.black87,
@@ -205,7 +231,7 @@ class UserSessionsWidget extends StatelessWidget {
                           SizedBox(
                             width: 150,
                             child: Text(
-                              _formatDateTime(user['lastLogout'] as DateTime),
+                              _formatDateTime(user['lastLogout']),
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.black87,
@@ -225,7 +251,18 @@ class UserSessionsWidget extends StatelessWidget {
     );
   }
 
-  String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+  String _formatDateTime(dynamic date) {
+    if (date == null) return '-';
+    if (date is DateTime) {
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    }
+    if (date is String) {
+      final parsed = DateTime.tryParse(date);
+      if (parsed != null) {
+        return '${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')} ${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}';
+      }
+      return date;
+    }
+    return '-';
   }
 }

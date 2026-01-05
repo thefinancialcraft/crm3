@@ -1,14 +1,14 @@
 class AppConstants {
-  static const defaultCrmUrl = 'https://thefinancialcraft.github.io/dumCrm/';
+  static const defaultCrmUrl = 'https://tfc-connectv2.vercel.app/';
 
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://uwvymdexcapqxpbjaous.supabase.co',
+    defaultValue: 'https://qcglmkmhqvmkugaqvqih.supabase.co',
   );
 
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
     defaultValue:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3dnltZGV4Y2FwcXhwYmphb3VzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE4NDE3NzMsImV4cCI6MjA3NzQxNzc3M30.Nexpj5GoNp97UqTNdJ-6xQMB_05mauBbswr69neAZkw',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjZ2xta21ocXZta3VnYXF2cWloIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjQ5MDkxNSwiZXhwIjoyMDgyMDY2OTE1fQ.aaQXquGml4Cw0mlRufdgmw4hRbCQH_PnUXKO6nK7_OM',
   );
 }

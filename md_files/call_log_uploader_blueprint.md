@@ -30,6 +30,7 @@ A Flutter hybrid app (Android + Web) that:
 - Provides a Developer Mode page (sync controls, logs, device info)
 
 **Primary pages:**
+
 1. Developer Mode Page (Dev Mode)
 2. In-App WebView Page
 
@@ -41,17 +42,17 @@ A Flutter hybrid app (Android + Web) that:
 
 # 2. Environment & Core Versions (Active Project)
 
-| Component | Recommended Version |
-|---|---:|
-| Flutter SDK | `3.35.7` (stable)
-| Dart SDK | `3.9.2`
-| Kotlin | `1.9.x` (project targets JVM 11)
-| Gradle (wrapper) | `8.12`
-| Android Gradle Plugin (AGP) | `8.7.2`
-| Java JDK | `17`
-| compileSdkVersion | `35`
-| targetSdkVersion | `35`
-| minSdkVersion | `21`
+| Component                   |              Recommended Version |
+| --------------------------- | -------------------------------: |
+| Flutter SDK                 |                `3.35.7` (stable) |
+| Dart SDK                    |                          `3.9.2` |
+| Kotlin                      | `1.9.x` (project targets JVM 11) |
+| Gradle (wrapper)            |                           `8.12` |
+| Android Gradle Plugin (AGP) |                          `8.7.2` |
+| Java JDK                    |                             `17` |
+| compileSdkVersion           |                             `35` |
+| targetSdkVersion            |                             `35` |
+| minSdkVersion               |                             `21` |
 
 > Rationale: these versions are tested and stable for the plugin set chosen. If you need to experiment with newer Kotlin (2.x) do so in a feature branch and test plugin compatibility carefully.
 
@@ -218,10 +219,10 @@ Add query intent schemes inside `<application>` to allow resolving external apps
 
 # 6. Database (Supabase) Schema & Policies
 
-## SQL: `call_logs` table
+## SQL: `call_history` table
 
 ```sql
-create table public.call_logs (
+create table public.call_history (
   id text primary key,
   number text not null,
   name text,
@@ -250,9 +251,9 @@ create table public.sync_meta (
 - Example policy placeholder (adapt to your auth scheme):
 
 ```sql
-alter table public.call_logs enable row level security;
+alter table public.call_history enable row level security;
 
-create policy "allow device insert" on public.call_logs
+create policy "allow device insert" on public.call_history
   for insert
   with check (device_id = current_setting('request.jwt_claims.device_id', true));
 ```
@@ -458,7 +459,7 @@ class SyncService {
         await Retry.retry(
           () async {
             final res = await client
-                .from('call_logs')
+                .from('call_history')
                 .insert(model.toJson())
                 .execute();
             if (res.error != null) throw res.error!;
@@ -601,23 +602,28 @@ Make UI reactive via `Provider` or `Riverpod` and keep logs persisted for offlin
 # 13. Error Handling (Detailed)
 
 ### Permission errors
+
 - Show modal explaining why access is needed.
 - Provide open-app-settings button using `permission_handler` (`openAppSettings()`).
 - Pause background sync if permission revoked.
 
 ### Network errors
+
 - Retry with exponential backoff (3 attempts). If still failing: pause for 5 minutes, update `sync_meta.last_error`, reflect in UI.
 
 ### API errors
+
 - 409 duplicate: mark as synced → move id into `syncedBucket`.
 - 400 invalid payload: mark as corrupted and move to a `corrupted` box for manual review.
 - 5xx server errors: pause sync and notify user in Dev Mode.
 
 ### Service crashes
+
 - On app/service restart, resume from `sync_meta.last_synced_at`.
 - Save progress after each successful batch upload.
 
 ### Battery optimization
+
 - Detect battery saver/doze (via Android APIs or plugin), warn user, and provide whitelist instructions.
 
 ---
@@ -655,7 +661,7 @@ Make UI reactive via `Provider` or `Riverpod` and keep logs persisted for offlin
 Remove old logs (90 days):
 
 ```sql
-delete from public.call_logs where timestamp < now() - interval '90 days';
+delete from public.call_history where timestamp < now() - interval '90 days';
 ```
 
 ---
@@ -687,5 +693,4 @@ Reply with the number of the deliverable you want next and I will generate it.
 
 ---
 
-*End of blueprint.*
-
+_End of blueprint._

@@ -33,11 +33,11 @@ class _ManualControlsState extends State<ManualControls> {
           isLoading: _isSyncing,
           onTap: () async {
             if (_isSyncing) return;
-            
+
             setState(() {
               _isSyncing = true;
             });
-            
+
             LoggerService.ui('Start Sync tapped');
             sync.setSyncing(true);
             final callSvc = CallLogService();
@@ -84,11 +84,11 @@ class _ManualControlsState extends State<ManualControls> {
           isLoading: _isSendingFakeData,
           onTap: () async {
             if (_isSendingFakeData) return;
-            
+
             setState(() {
               _isSendingFakeData = true;
             });
-            
+
             LoggerService.ui('Send Fake Data tapped');
             final callSvc = CallLogService();
             try {
@@ -133,7 +133,7 @@ class _ManualControlsState extends State<ManualControls> {
           isLoading: _isClearingBuckets,
           onTap: () {
             if (_isClearingBuckets) return;
-            
+
             LoggerService.ui('Clear Buckets tapped');
             try {
               final pendingBefore = StorageService.callBucket.length;
@@ -155,12 +155,12 @@ class _ManualControlsState extends State<ManualControls> {
                     TextButton(
                       onPressed: () async {
                         Navigator.of(ctx).pop();
-                        
+
                         // Set loading state for the clear buckets button
                         setState(() {
                           _isClearingBuckets = true;
                         });
-                        
+
                         try {
                           StorageService.clearCallBucket();
                           final pendingAfter = StorageService.callBucket.length;
@@ -203,16 +203,14 @@ class _ManualControlsState extends State<ManualControls> {
   }
 
   Widget _buildControlCard(
-    BuildContext context,
-    {
-      required IconData icon,
-      required String title,
-      required String subtitle,
-      required Color color,
-      required bool isLoading,
-      required VoidCallback onTap,
-    }
-  ) {
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color color,
+    required bool isLoading,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: isLoading ? null : onTap,
       child: Opacity(

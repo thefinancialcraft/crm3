@@ -1,18 +1,51 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/sync_provider.dart';
+import '../services/logger_service.dart';
 
 class UserInfoWidget extends StatelessWidget {
   const UserInfoWidget({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Dummy data for now
-    final currentUser = {
-      'id': 'USR001',
-      'name': 'John Developer',
-      'role': 'Senior Developer',
-      'firstLogin': DateTime.now().subtract(const Duration(days: 30)),
-      'lastLogin': DateTime.now().subtract(const Duration(hours: 2)),
-    };
+    final user = context.watch<SyncProvider>().user;
+    LoggerService.info(
+      "🎨 UserInfoWidget: building for ${user?.userName ?? 'null'}",
+    );
+
+    if (user == null) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Center(
+          child: Column(
+            children: const [
+              Icon(Icons.person_off, size: 48, color: Colors.grey),
+              SizedBox(height: 16),
+              Text(
+                "No User Info Synced",
+                style: TextStyle(color: Colors.grey, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Parse dates safely
+    DateTime? firstLogin;
+    DateTime? lastLogin;
+    try {
+      if (user.createdAt != null) {
+        firstLogin = DateTime.parse(user.createdAt!);
+      }
+      if (user.lastSignInAt != null) {
+        lastLogin = DateTime.parse(user.lastSignInAt!);
+      }
+    } catch (_) {}
 
     return Container(
       decoration: BoxDecoration(
@@ -43,20 +76,33 @@ class UserInfoWidget extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          
+
           // Profile Header with Icon
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white24,
+                padding: const EdgeInsets.all(2), // border
+                decoration: const BoxDecoration(
+                  color: Colors.white,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.account_circle,
-                  color: Colors.white,
-                  size: 40,
+                child: CircleAvatar(
+                  radius: 28,
+                  backgroundColor: Colors.white24,
+                  backgroundImage:
+                      (user.profilePicUrl != null &&
+                          user.profilePicUrl!.isNotEmpty)
+                      ? NetworkImage(user.profilePicUrl!)
+                      : null,
+                  child:
+                      (user.profilePicUrl == null ||
+                          user.profilePicUrl!.isEmpty)
+                      ? const Icon(
+                          Icons.account_circle,
+                          color: Colors.grey,
+                          size: 40,
+                        )
+                      : null,
                 ),
               ),
               const SizedBox(width: 16),
@@ -65,7 +111,7 @@ class UserInfoWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      currentUser['name'] as String,
+                      user.userName,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
@@ -74,20 +120,28 @@ class UserInfoWidget extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'ID: ${currentUser['id'] as String}',
-                      style: TextStyle(
+                      'ID: ${user.employeeId}',
+                      style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 14,
                       ),
                     ),
+                    if (user.email.isNotEmpty)
+                      Text(
+                        user.email,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
                   ],
                 ),
               ),
             ],
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // User Details Grid
           Container(
             decoration: BoxDecoration(
@@ -107,23 +161,44 @@ class UserInfoWidget extends StatelessWidget {
                 _buildDetailCard(
                   icon: Icons.work,
                   title: 'Role',
-                  value: currentUser['role'] as String,
+                  value: user.role,
                   color: Colors.green,
                 ),
+                if (user.designation.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildDetailCard(
+                    icon: Icons.badge,
+                    title: 'Designation',
+                    value: user.designation,
+                    color: Colors.purple,
+                  ),
+                ],
+                if (user.department != null && user.department!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildDetailCard(
+                    icon: Icons.apartment,
+                    title: 'Department',
+                    value: user.department!,
+                    color: Colors.deepOrange,
+                  ),
+                ],
                 const SizedBox(height: 12),
-                _buildDetailCard(
-                  icon: Icons.login,
-                  title: 'First Login',
-                  value: _formatDateTime(currentUser['firstLogin'] as DateTime),
-                  color: Colors.orange,
-                ),
-                const SizedBox(height: 12),
-                _buildDetailCard(
-                  icon: Icons.watch_later,
-                  title: 'Last Login',
-                  value: _formatDateTime(currentUser['lastLogin'] as DateTime),
-                  color: Colors.blue,
-                ),
+                if (firstLogin != null) ...[
+                  _buildDetailCard(
+                    icon: Icons.login,
+                    title: 'Created At',
+                    value: _formatDateTime(firstLogin),
+                    color: Colors.orange,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (lastLogin != null)
+                  _buildDetailCard(
+                    icon: Icons.watch_later,
+                    title: 'Last Login',
+                    value: _formatDateTime(lastLogin),
+                    color: Colors.blue,
+                  ),
               ],
             ),
           ),
@@ -148,10 +223,7 @@ class UserInfoWidget extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
             child: Icon(icon, color: Colors.white, size: 20),
           ),
           const SizedBox(width: 12),

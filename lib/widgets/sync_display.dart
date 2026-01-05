@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../providers/sync_provider.dart';
 
 class SyncDisplay extends StatelessWidget {
   final bool isSyncing;
@@ -46,25 +45,30 @@ class SyncDisplay extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          
+
           // Status Tabs
           Row(
             children: [
-              _buildStatusTab('Pending', pending.toString(), Colors.orange, true),
+              _buildStatusTab(
+                'Pending',
+                pending.toString(),
+                Colors.orange,
+                true,
+              ),
               const SizedBox(width: 12),
               _buildStatusTab('Synced', synced.toString(), Colors.green, true),
               const SizedBox(width: 12),
               _buildStatusTab(
-                'Status', 
-                isSyncing ? 'Syncing' : 'Idle', 
+                'Status',
+                isSyncing ? 'Syncing' : 'Idle',
                 isSyncing ? const Color(0xFF5E17EB) : Colors.grey,
-                true
+                true,
               ),
             ],
           ),
-          
+
           const SizedBox(height: 20),
-          
+
           // Last Sync Info
           Container(
             decoration: BoxDecoration(
@@ -110,7 +114,7 @@ class SyncDisplay extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            lastSync != null 
+                            lastSync != null
                                 ? '${lastSync!.year}-${lastSync!.month.toString().padLeft(2, '0')}-${lastSync!.day.toString().padLeft(2, '0')} ${lastSync!.hour.toString().padLeft(2, '0')}:${lastSync!.minute.toString().padLeft(2, '0')}:${lastSync!.second.toString().padLeft(2, '0')}'
                                 : '-',
                             style: const TextStyle(
@@ -132,7 +136,12 @@ class SyncDisplay extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusTab(String label, String value, Color color, bool showIcon) {
+  Widget _buildStatusTab(
+    String label,
+    String value,
+    Color color,
+    bool showIcon,
+  ) {
     return Expanded(
       child: Container(
         decoration: BoxDecoration(

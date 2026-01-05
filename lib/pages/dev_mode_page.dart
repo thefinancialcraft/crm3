@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -12,6 +13,7 @@ import '../widgets/user_sessions_widget.dart';
 import '../services/call_log_service.dart';
 import '../utils/device_utils.dart';
 import '../services/storage_service.dart';
+import '../services/webbridge_service.dart';
 
 class DevModePage extends StatefulWidget {
   const DevModePage({super.key});
@@ -28,6 +30,7 @@ class _DevModePageState extends State<DevModePage> {
   final GlobalKey<RefreshIndicatorState> _refreshIndicatorKey =
       GlobalKey<RefreshIndicatorState>();
   bool _showLiveLogs = true;
+  bool _showMessagesIn = true;
 
   @override
   void initState() {
@@ -175,6 +178,14 @@ class _DevModePageState extends State<DevModePage> {
                   ),
                   const SizedBox(height: 24),
 
+                  // User Information
+                  const UserInfoWidget(),
+                  const SizedBox(height: 24),
+
+                  // User Sessions
+                  const UserSessionsWidget(),
+                  const SizedBox(height: 24),
+
                   // Device Info Card
                   const Text(
                     'Device Information',
@@ -189,47 +200,55 @@ class _DevModePageState extends State<DevModePage> {
                     future: DeviceUtils.getDeviceInfo(),
                     builder: (ctx, snap) {
                       final info = snap.data;
+                      final model = info?['model'] ?? '-';
+
                       return Column(
                         children: [
                           _buildDeviceInfoCard(
-                            Icons.phone_android_outlined,
+                            Icons.branding_watermark,
+                            'Brand',
+                            info?['brand'] ?? '-',
+                            Colors.purple,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildDeviceInfoCard(
+                            Icons.phone_android,
+                            'Model Name',
+                            model,
+                            Colors.blue,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildDeviceInfoCard(
+                            Icons.android,
+                            'Android Version',
+                            info?['osVersion'] ?? '-',
+                            Colors.green,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildDeviceInfoCard(
+                            Icons.developer_mode,
+                            'SDK Version',
+                            info?['sdkVersion'] ?? '-',
+                            Colors.orange,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildDeviceInfoCard(
+                            Icons.fingerprint,
                             'Device ID',
                             info?['deviceId'] ?? sync.deviceId ?? '-',
                             const Color(0xFF5E17EB),
                           ),
                           const SizedBox(height: 12),
                           _buildDeviceInfoCard(
-                            Icons.memory_outlined,
-                            'OS',
-                            info?['osVersion'] ?? '-',
-                            Colors.green,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildDeviceInfoCard(
-                            Icons.devices_other_outlined,
-                            'Name',
-                            info?['deviceName'] ?? '-',
-                            Colors.blue,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildDeviceInfoCard(
-                            Icons.model_training_outlined,
-                            'Model',
-                            info?['model'] ?? '-',
-                            Colors.orange,
+                            Icons.perm_device_information,
+                            'Android ID',
+                            info?['androidId'] ?? '-',
+                            Colors.red,
                           ),
                         ],
                       );
                     },
                   ),
-                  const SizedBox(height: 24),
-
-                  // User Information
-                  const UserInfoWidget(),
-                  const SizedBox(height: 24),
-
-                  // User Sessions
-                  const UserSessionsWidget(),
                   const SizedBox(height: 24),
 
                   // Sync Status
@@ -266,15 +285,48 @@ class _DevModePageState extends State<DevModePage> {
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.grey.withOpacity(0.1),
+                          color: Colors.grey.withValues(alpha: 0.1),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
                       ],
                     ),
                     padding: const EdgeInsets.all(16),
-                    child: const ManualControls(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const ManualControls(),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            CallLogService().testOverlay();
+                            // Also modify LogViewer to show this if needed,
+                            // but LoggerService.info already does.
+                          },
+                          icon: const Icon(Icons.layers_outlined),
+                          label: const Text('Test Call Overlay'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.indigo,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.all(12),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(height: 24),
+
+                  // Storage Hierarchy
+                  const Text(
+                    'Storage Hierarchy',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF5E17EB),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildStorageHierarchy(context, sync),
                   const SizedBox(height: 24),
 
                   // Logs Section
@@ -293,7 +345,7 @@ class _DevModePageState extends State<DevModePage> {
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.grey.withOpacity(0.1),
+                          color: Colors.grey.withValues(alpha: 0.1),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
@@ -305,6 +357,7 @@ class _DevModePageState extends State<DevModePage> {
                         SizedBox(
                           width: double.infinity,
                           child: LogsToggleButton(
+                            isLiveSelected: _showLiveLogs,
                             onToggle: (isLive) {
                               setState(() {
                                 _showLiveLogs = isLive;
@@ -322,6 +375,19 @@ class _DevModePageState extends State<DevModePage> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 24),
+
+                  // WebView Messages
+                  const Text(
+                    'WebView Messages',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF5E17EB),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildWebViewMessages(context, sync),
                   const SizedBox(height: 30),
                 ],
               ),
@@ -344,7 +410,7 @@ class _DevModePageState extends State<DevModePage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -357,7 +423,7 @@ class _DevModePageState extends State<DevModePage> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: color, size: 20),
@@ -397,7 +463,7 @@ class _DevModePageState extends State<DevModePage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -409,7 +475,7 @@ class _DevModePageState extends State<DevModePage> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: color, size: 24),
@@ -440,27 +506,546 @@ class _DevModePageState extends State<DevModePage> {
       ),
     );
   }
+
+  Widget _buildStorageHierarchy(BuildContext context, SyncProvider sync) {
+    final callBucketCount = StorageService.callBucket.length;
+    final syncedBucketCount = StorageService.syncedBucket.length;
+    final appLogsCount = StorageService.appLogs.length;
+    final metaKeys = StorageService.meta.keys.length;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          _buildStorageItem(context, 'Hive Storage', const Color(0xFF5E17EB)),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.only(left: 32),
+            child: Column(
+              children: [
+                _buildStorageItem(
+                  context,
+                  'Call Bucket',
+                  Colors.blue,
+                  count: callBucketCount,
+                  isChild: true,
+                ),
+                const SizedBox(height: 8),
+                _buildStorageItem(
+                  context,
+                  'Synced Bucket',
+                  Colors.green,
+                  count: syncedBucketCount,
+                  isChild: true,
+                ),
+                const SizedBox(height: 8),
+                _buildStorageItem(
+                  context,
+                  'App Logs',
+                  Colors.orange,
+                  count: appLogsCount,
+                  isChild: true,
+                ),
+                const SizedBox(height: 8),
+                _buildStorageItem(
+                  context,
+                  'Meta Box',
+                  Colors.purple,
+                  count: metaKeys,
+                  isChild: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStorageItem(
+    BuildContext context,
+    String label,
+    Color color, {
+    int? count,
+    bool isChild = false,
+  }) {
+    IconData icon;
+    if (label == 'Hive Storage') {
+      icon = Icons.inbox;
+    } else if (label == 'Call Bucket') {
+      icon = Icons.phone_callback;
+    } else if (label == 'Synced Bucket') {
+      icon = Icons.cloud_done;
+    } else if (label == 'App Logs') {
+      icon = Icons.description;
+    } else if (label == 'Meta Box') {
+      icon = Icons.info;
+    } else {
+      icon = Icons.storage;
+    }
+
+    return GestureDetector(
+      onTap: () {
+        _showStorageDetails(context, label, color);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: isChild ? 14 : 16,
+                  fontWeight: isChild ? FontWeight.normal : FontWeight.w600,
+                ),
+              ),
+            ),
+            if (count != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  count.toString(),
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, color: color, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showStorageDetails(BuildContext context, String label, Color color) {
+    final box = _getStorageBox(label);
+    if (box == null) return;
+
+    final keys = box.keys.toList();
+    final items = <String>[];
+
+    for (final key in keys) {
+      final value = box.get(key);
+      String jsonValue;
+
+      try {
+        if (value is Map) {
+          jsonValue = JsonEncoder.withIndent('  ').convert(value);
+        } else if (value is List) {
+          jsonValue = JsonEncoder.withIndent('  ').convert(value);
+        } else {
+          jsonValue = JsonEncoder.withIndent('  ').convert({'value': value});
+        }
+      } catch (e) {
+        jsonValue = value.toString();
+      }
+
+      items.add('Key: $key\n\n$jsonValue');
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          constraints: const BoxConstraints(maxHeight: 600),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: Colors.grey.shade200),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _getIconForLabel(label),
+                        color: color,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: items.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No data found',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: items.length,
+                        itemBuilder: (context, i) {
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: color.withValues(alpha: 0.2),
+                              ),
+                            ),
+                            child: SelectableText(
+                              items[i],
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                height: 1.4,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  dynamic _getStorageBox(String label) {
+    if (label == 'Call Bucket') {
+      return StorageService.callBucket;
+    } else if (label == 'Synced Bucket') {
+      return StorageService.syncedBucket;
+    } else if (label == 'App Logs') {
+      return StorageService.appLogs;
+    } else if (label == 'Meta Box') {
+      return StorageService.meta;
+    }
+    return null;
+  }
+
+  IconData _getIconForLabel(String label) {
+    if (label == 'Hive Storage') {
+      return Icons.inbox;
+    } else if (label == 'Call Bucket') {
+      return Icons.phone_callback;
+    } else if (label == 'Synced Bucket') {
+      return Icons.cloud_done;
+    } else if (label == 'App Logs') {
+      return Icons.description;
+    } else if (label == 'Meta Box') {
+      return Icons.info;
+    }
+    return Icons.storage;
+  }
+
+  Widget _buildWebViewMessages(BuildContext context, SyncProvider sync) {
+    final messagesIn = sync.webViewMessagesIn.reversed.toList();
+    final messagesOut = sync.webViewMessagesOut.reversed.toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.swap_horiz,
+                  color: Color(0xFF5E17EB),
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Message Traffic',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+                // Connection status indicator
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: WebBridgeService.isConnected
+                        ? Colors.green
+                        : Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.red,
+                    size: 20,
+                  ),
+                  onPressed: () => sync.clearWebViewMessages(),
+                  tooltip: 'Clear messages',
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 50,
+            child: _WebViewToggleButton(
+              showIn: _showMessagesIn,
+              inCount: messagesIn.length,
+              outCount: messagesOut.length,
+              onToggle: (showIn) {
+                setState(() {
+                  _showMessagesIn = showIn;
+                });
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 300,
+            child: _showMessagesIn
+                ? _buildMessageList(
+                    messagesIn,
+                    Colors.green,
+                    'No incoming messages',
+                  )
+                : _buildMessageList(
+                    messagesOut,
+                    Colors.blue,
+                    'No outgoing messages',
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageList(
+    List<String> messages,
+    Color color,
+    String emptyText,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      child: messages.isEmpty
+          ? Center(
+              child: Text(
+                emptyText,
+                style: const TextStyle(color: Colors.grey),
+              ),
+            )
+          : ListView.builder(
+              itemCount: messages.length,
+              itemBuilder: (context, i) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: color.withValues(alpha: 0.2),
+                      width: 1,
+                    ),
+                  ),
+                  child: SelectableText(
+                    messages[i],
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: Colors.black87,
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
 }
 
-class LogsToggleButton extends StatefulWidget {
-  final Function(bool isLive) onToggle;
+class _WebViewToggleButton extends StatelessWidget {
+  final bool showIn;
+  final int inCount;
+  final int outCount;
+  final Function(bool showIn) onToggle;
 
-  const LogsToggleButton({super.key, required this.onToggle});
-
-  @override
-  State<LogsToggleButton> createState() => _LogsToggleButtonState();
-}
-
-class _LogsToggleButtonState extends State<LogsToggleButton> {
-  bool isLiveSelected = true;
+  const _WebViewToggleButton({
+    required this.showIn,
+    required this.inCount,
+    required this.outCount,
+    required this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final buttonWidth = constraints.maxWidth;
-        final tabWidth =
-            (buttonWidth - 8) / 2; // Subtract padding and divide by 2
+        final tabWidth = (buttonWidth - 8) / 2;
+
+        return Container(
+          width: buttonWidth,
+          height: 50,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: const Color(0xFF5E17EB), width: 1.5),
+            color: Colors.white,
+          ),
+          child: Stack(
+            children: [
+              AnimatedAlign(
+                alignment: showIn
+                    ? Alignment.centerLeft
+                    : Alignment.centerRight,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: Container(
+                  width: tabWidth,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF5E17EB),
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  _buildTab(
+                    width: tabWidth,
+                    label: "IN ($inCount)",
+                    selected: showIn,
+                    onTap: () => onToggle(true),
+                  ),
+                  _buildTab(
+                    width: tabWidth,
+                    label: "OUT ($outCount)",
+                    selected: !showIn,
+                    onTap: () => onToggle(false),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTab({
+    required double width,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: width,
+        height: 42,
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.white : const Color(0xFF5E17EB),
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class LogsToggleButton extends StatelessWidget {
+  final bool isLiveSelected;
+  final Function(bool isLive) onToggle;
+
+  const LogsToggleButton({
+    super.key,
+    required this.isLiveSelected,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final buttonWidth = constraints.maxWidth;
+        final tabWidth = (buttonWidth - 8) / 2;
 
         return Container(
           width: buttonWidth,
@@ -483,37 +1068,26 @@ class _LogsToggleButtonState extends State<LogsToggleButton> {
                   width: tabWidth,
                   height: 42,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF5E17EB), Color(0xFF5E17EB)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+                    color: const Color(0xFF5E17EB),
                     borderRadius: BorderRadius.circular(30),
                   ),
                 ),
               ),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   _buildTab(
                     width: tabWidth,
                     icon: Icons.storage_rounded,
-                    label: "Persisted Logs",
+                    label: "Persisted",
                     selected: !isLiveSelected,
-                    onTap: () {
-                      setState(() => isLiveSelected = false);
-                      widget.onToggle(false);
-                    },
+                    onTap: () => onToggle(false),
                   ),
                   _buildTab(
                     width: tabWidth,
                     icon: Icons.live_tv_rounded,
-                    label: "Live Logs",
+                    label: "Live",
                     selected: isLiveSelected,
-                    onTap: () {
-                      setState(() => isLiveSelected = true);
-                      widget.onToggle(true);
-                    },
+                    onTap: () => onToggle(true),
                   ),
                 ],
               ),

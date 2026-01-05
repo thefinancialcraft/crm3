@@ -8,11 +8,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app.dart';
 import 'providers/sync_provider.dart';
 import 'services/storage_service.dart';
-import 'services/background_service.dart';
 import 'constants.dart';
-import 'services/permission_service.dart';
 import 'services/logger_service.dart';
-import 'services/call_log_service_v2.dart' as v2;
+import 'overlay/main_overlay.dart' as overlay;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,15 +26,9 @@ Future<void> main() async {
       anonKey: AppConstants.supabaseAnonKey,
     );
   }
-  await PermissionService.requestEssential();
-  
-  // Initialize background service for both Android and iOS
-  if (!kIsWeb) {
-    await BackgroundService.setup();
-  }
-  
-  // Initialize call state listener when app has UI
-  _startCallStateListener();
+  // Permissions, Background Service and Call State Listener will be initialized
+  // in InAppWebViewPage after consent and permissions are granted.
+
   runApp(const RootApp());
 }
 
@@ -49,7 +41,7 @@ class RootApp extends StatelessWidget {
       providers: [ChangeNotifierProvider(create: (_) => SyncProvider())],
       child: MaterialApp(
         navigatorKey: LoggerService.navKey,
-        title: 'Call Log Uploader',
+        title: 'TFC Nexus',
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         ),
@@ -59,16 +51,8 @@ class RootApp extends StatelessWidget {
   }
 }
 
-// Global CallLogService instance for real-time call state tracking
-final _callLogService = v2.CallLogService();
-
-// Start call state listener once the app frame is ready
-void _startCallStateListener() {
-  try {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Initialize real-time call state listener (like Truecaller)
-      _callLogService.initializeCallStateListener();
-      LoggerService.info('Call state listener initialized');
-    });
-  } catch (_) {}
+// Overlay Entry Point
+@pragma("vm:entry-point")
+void overlayMain() {
+  overlay.overlayMain();
 }

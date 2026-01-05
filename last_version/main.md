@@ -14,96 +14,96 @@ import 'call_log_service.dart';
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize background service
-  try {
-    await CallLogService.initializeBackgroundService();
-    debugPrint('Background service initialized successfully');
-  } catch (e) {
-    debugPrint('Error initializing background service: $e');
-  }
+// Initialize background service
+try {
+await CallLogService.initializeBackgroundService();
+debugPrint('Background service initialized successfully');
+} catch (e) {
+debugPrint('Error initializing background service: $e');
+}
 
-  // Initialize Supabase
-  debugPrint(
-    'Initializing Supabase with URL: ${SupabaseConstants.supabaseUrl}',
-  );
-  await Supabase.initialize(
-    url: SupabaseConstants.supabaseUrl,
-    anonKey: SupabaseConstants.supabaseAnonKey,
-  );
+// Initialize Supabase
+debugPrint(
+'Initializing Supabase with URL: ${SupabaseConstants.supabaseUrl}',
+);
+await Supabase.initialize(
+url: SupabaseConstants.supabaseUrl,
+anonKey: SupabaseConstants.supabaseAnonKey,
+);
 
-  // Check if Supabase is properly initialized
-  try {
-    Supabase.instance.client;
-    debugPrint('Supabase client initialized successfully');
-  } catch (e) {
-    debugPrint('Error initializing Supabase client: $e');
-  }
+// Check if Supabase is properly initialized
+try {
+Supabase.instance.client;
+debugPrint('Supabase client initialized successfully');
+} catch (e) {
+debugPrint('Error initializing Supabase client: $e');
+}
 
-  // Wait until after widget tree is built to request permissions
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    if (Platform.isAndroid) {
-      final callLogService = CallLogService();
-      final hasPermission = await callLogService.requestPermission();
-      debugPrint('Call log permission status: $hasPermission');
-    }
-  });
+// Wait until after widget tree is built to request permissions
+WidgetsBinding.instance.addPostFrameCallback((\_) async {
+if (Platform.isAndroid) {
+final callLogService = CallLogService();
+final hasPermission = await callLogService.requestPermission();
+debugPrint('Call log permission status: $hasPermission');
+}
+});
 
-  runApp(const MyApp());
+runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+const MyApp({super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '',
-      scaffoldMessengerKey: scaffoldMessengerKey,
-      theme: ThemeData(useMaterial3: true),
-      home: const BlankScreen(),
-      debugShowCheckedModeBanner: false,
-    );
-  }
+@override
+Widget build(BuildContext context) {
+return MaterialApp(
+title: '',
+scaffoldMessengerKey: scaffoldMessengerKey,
+theme: ThemeData(useMaterial3: true),
+home: const BlankScreen(),
+debugShowCheckedModeBanner: false,
+);
+}
 }
 
 class BlankScreen extends StatefulWidget {
-  const BlankScreen({super.key});
+const BlankScreen({super.key});
 
-  @override
-  State<BlankScreen> createState() => _BlankScreenState();
+@override
+State<BlankScreen> createState() => \_BlankScreenState();
 }
 
-class _BlankScreenState extends State<BlankScreen> {
-  late CallLogService _callLogService;
-  final List<String> _logMessages = [];
-  bool _isProcessing = false;
-  int _fetchedCount = 0;
-  int _syncedCount = 0;
-  final ScrollController _scrollController = ScrollController();
+class \_BlankScreenState extends State<BlankScreen> {
+late CallLogService \_callLogService;
+final List<String> \_logMessages = [];
+bool \_isProcessing = false;
+int \_fetchedCount = 0;
+int \_syncedCount = 0;
+final ScrollController \_scrollController = ScrollController();
 
-  // Call log stats
-  int _totalLogs = 0;
-  int _missedCalls = 0;
-  DateTime? _latestCallTime;
-  DateTime? _lastSyncTime;
+// Call log stats
+int \_totalLogs = 0;
+int \_missedCalls = 0;
+DateTime? \_latestCallTime;
+DateTime? \_lastSyncTime;
 
-  // State to control visibility - show WebView by default
-  bool _showSupabaseSetup = false;
+// State to control visibility - show WebView by default
+bool \_showSupabaseSetup = false;
 
-  // WebView state
-  bool _webViewLoading = false;
-  String _webViewError = '';
-  InAppWebViewController? _webViewController;
-  Timer? _readyCheckTimer;
-  // Track whether the WebView can go back in its history. Kept in state so
-  // `PopScope.canPop` can synchronously decide whether to allow system pops.
-  bool _webViewCanGoBack = false;
+// WebView state
+bool \_webViewLoading = false;
+String \_webViewError = '';
+InAppWebViewController? \_webViewController;
+Timer? \_readyCheckTimer;
+// Track whether the WebView can go back in its history. Kept in state so
+// `PopScope.canPop` can synchronously decide whether to allow system pops.
+bool \_webViewCanGoBack = false;
 
-  Future<void> _updateStats() async {
-    final stats = await _callLogService.getCallLogStats();
-    final syncTime = _callLogService.getLastSyncTime();
+Future<void> \_updateStats() async {
+final stats = await \_callLogService.getCallLogStats();
+final syncTime = \_callLogService.getLastSyncTime();
 
     setState(() {
       _totalLogs = stats['total'] as int;
@@ -111,13 +111,14 @@ class _BlankScreenState extends State<BlankScreen> {
       _latestCallTime = stats['latest'] as DateTime?;
       _lastSyncTime = syncTime;
     });
-  }
 
-  @override
-  void initState() {
-    super.initState();
-    _callLogService = CallLogService();
-    _addLogMessage('App initialized. Ready to fetch and sync call logs.');
+}
+
+@override
+void initState() {
+super.initState();
+\_callLogService = CallLogService();
+\_addLogMessage('App initialized. Ready to fetch and sync call logs.');
 
     // Test Supabase connection and update stats
     _testSupabaseConnection();
@@ -134,86 +135,88 @@ class _BlankScreenState extends State<BlankScreen> {
     } catch (e) {
       _addErrorMessage('Failed to start auto-sync: $e');
     }
-  }
 
-  void _testSupabaseConnection() async {
-    try {
-      final supabase = Supabase.instance.client;
-      // Try a simple query to test the connection
-      final response = await supabase.from('call_logs').select().limit(1);
-      _addLogMessage('Supabase connection test successful.');
-      debugPrint('Supabase connection test response: $response');
-    } catch (e) {
-      _addErrorMessage('Supabase connection test failed: $e');
-    }
-  }
+}
 
-  void _addLogMessage(String message) {
-    setState(() {
-      _logMessages.insert(
-        0,
-        '[${DateTime.now().toString().split('.').first}] $message',
-      );
-    });
-    // Auto-scroll to bottom when new messages are added
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
-    });
-    debugPrint(message);
-  }
+void \_testSupabaseConnection() async {
+try {
+final supabase = Supabase.instance.client;
+// Try a simple query to test the connection
+final response = await supabase.from('call_history').select().limit(1);
+\_addLogMessage('Supabase connection test successful.');
+debugPrint('Supabase connection test response: $response');
+} catch (e) {
+\_addErrorMessage('Supabase connection test failed: $e');
+}
+}
 
-  void _addErrorMessage(String message) {
-    setState(() {
-      _logMessages.insert(
-        0,
-        '[${DateTime.now().toString().split('.').first}] ERROR: $message',
-      );
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
-    });
-    debugPrint('ERROR: $message');
-  }
+void _addLogMessage(String message) {
+setState(() {
+\_logMessages.insert(
+0,
+'[${DateTime.now().toString().split('.').first}] $message',
+);
+});
+// Auto-scroll to bottom when new messages are added
+WidgetsBinding.instance.addPostFrameCallback((_) {
+if (\_scrollController.hasClients) {
+\_scrollController.jumpTo(0);
+}
+});
+debugPrint(message);
+}
 
-  void _copyLogsToClipboard() {
-    final String allLogs = _logMessages.reversed.join('\n');
-    Clipboard.setData(ClipboardData(text: allLogs));
-    // Use the global scaffold messenger key to avoid using a BuildContext
-    // across async gaps.
-    scaffoldMessengerKey.currentState?.showSnackBar(
-      const SnackBar(
-        content: Text('Logs copied to clipboard'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
+void _addErrorMessage(String message) {
+setState(() {
+\_logMessages.insert(
+0,
+'[${DateTime.now().toString().split('.').first}] ERROR: $message',
+);
+});
+WidgetsBinding.instance.addPostFrameCallback((_) {
+if (\_scrollController.hasClients) {
+\_scrollController.jumpTo(0);
+}
+});
+debugPrint('ERROR: $message');
+}
 
-  void _handleStartButtonPressed() async {
-    // Check if platform is iOS
-      if (Theme.of(context).platform == TargetPlatform.iOS) {
-      _addErrorMessage('Call logs are not supported on iOS');
-      // Show message that call logs are not supported on iOS
-        scaffoldMessengerKey.currentState?.showSnackBar(
-          const SnackBar(
-            content: Text('Call logs are not supported on iOS'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      return;
-    }
+void \_copyLogsToClipboard() {
+final String allLogs = \_logMessages.reversed.join('\n');
+Clipboard.setData(ClipboardData(text: allLogs));
+// Use the global scaffold messenger key to avoid using a BuildContext
+// across async gaps.
+scaffoldMessengerKey.currentState?.showSnackBar(
+const SnackBar(
+content: Text('Logs copied to clipboard'),
+backgroundColor: Colors.green,
+),
+);
+}
+
+void \_handleStartButtonPressed() async {
+// Check if platform is iOS
+if (Theme.of(context).platform == TargetPlatform.iOS) {
+\_addErrorMessage('Call logs are not supported on iOS');
+// Show message that call logs are not supported on iOS
+scaffoldMessengerKey.currentState?.showSnackBar(
+const SnackBar(
+content: Text('Call logs are not supported on iOS'),
+backgroundColor: Colors.red,
+),
+);
+return;
+}
 
     // For Android, read and upload logs
     await _readAndUploadLogs();
-  }
 
-  Future<void> _sendFakeData() async {
-    setState(() {
-      _isProcessing = true;
-    });
+}
+
+Future<void> \_sendFakeData() async {
+setState(() {
+\_isProcessing = true;
+});
 
     _addLogMessage('Sending fake test data to Supabase...');
 
@@ -241,14 +244,15 @@ class _BlankScreenState extends State<BlankScreen> {
         _isProcessing = false;
       });
     }
-  }
 
-  Future<void> _readAndUploadLogs() async {
-    setState(() {
-      _isProcessing = true;
-      _fetchedCount = 0;
-      _syncedCount = 0;
-    });
+}
+
+Future<void> \_readAndUploadLogs() async {
+setState(() {
+\_isProcessing = true;
+\_fetchedCount = 0;
+\_syncedCount = 0;
+});
 
     _addLogMessage('Starting call log fetch and sync process...');
 
@@ -325,30 +329,27 @@ class _BlankScreenState extends State<BlankScreen> {
         _isProcessing = false;
       });
     }
-  }
 
-  // Note: back button handling is implemented via `PopScope` in `build`.
+}
 
+// Note: back button handling is implemented via `PopScope` in `build`.
 
-
-
-
-  @override
-  Widget build(BuildContext context) {
-    // Note: WillPopScope is deprecated in newer Flutter versions; replace
-    // with `PopScope` when targeting Flutter >= 3.12 and after verifying the
-    // correct `PopScope` callback signature in your SDK. For now we retain
-    // `WillPopScope` to ensure compatibility and a successful build.
-    // Use PopScope to replace the deprecated WillPopScope. We compute
-    // `canPop` synchronously using `_webViewCanGoBack` and `_showSupabaseSetup`.
-    // When `canPop` is false, system back gestures are blocked and
-    // `onPopInvokedWithResult` is called with `didPop == false` where we can
-    // show a confirmation dialog and perform a programmatic pop if confirmed.
-    return PopScope<dynamic>(
-      canPop: !(!_showSupabaseSetup && !_webViewCanGoBack),
-      onPopInvokedWithResult: (bool didPop, dynamic result) async {
-        // If the pop actually happened, there's nothing to do.
-        if (didPop) return;
+@override
+Widget build(BuildContext context) {
+// Note: WillPopScope is deprecated in newer Flutter versions; replace
+// with `PopScope` when targeting Flutter >= 3.12 and after verifying the
+// correct `PopScope` callback signature in your SDK. For now we retain
+// `WillPopScope` to ensure compatibility and a successful build.
+// Use PopScope to replace the deprecated WillPopScope. We compute
+// `canPop` synchronously using `_webViewCanGoBack` and `_showSupabaseSetup`.
+// When `canPop` is false, system back gestures are blocked and
+// `onPopInvokedWithResult` is called with `didPop == false` where we can
+// show a confirmation dialog and perform a programmatic pop if confirmed.
+return PopScope<dynamic>(
+canPop: !(!\_showSupabaseSetup && !\_webViewCanGoBack),
+onPopInvokedWithResult: (bool didPop, dynamic result) async {
+// If the pop actually happened, there's nothing to do.
+if (didPop) return;
 
         // Guard if widget disposed while handling pop invocation.
         if (!mounted) return;
@@ -905,13 +906,14 @@ class _BlankScreenState extends State<BlankScreen> {
         ),
       ),
     );
-  } // close build method
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _readyCheckTimer?.cancel();
-    _readyCheckTimer = null;
-    super.dispose();
-  }
-} // close _BlankScreenState class
+} // close build method
+
+@override
+void dispose() {
+\_scrollController.dispose();
+\_readyCheckTimer?.cancel();
+\_readyCheckTimer = null;
+super.dispose();
+}
+} // close \_BlankScreenState class

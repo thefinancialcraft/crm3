@@ -77,4 +77,42 @@ class StorageService {
       meta.put('syncStatus', s);
     } catch (_) {}
   }
+
+  // User Info Persistence
+  static Map<String, dynamic>? getUser() {
+    try {
+      final v = meta.get('userInfo');
+      if (v is Map) {
+        return Map<String, dynamic>.from(v);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> setUser(Map<String, dynamic> userMap) async {
+    try {
+      await meta.put('userInfo', userMap);
+    } catch (_) {}
+  }
+
+  // User Sessions Persistence
+  static List<Map<String, dynamic>> getUserSessions() {
+    try {
+      final v = meta.get('userSessions');
+      if (v is List) {
+        return List<Map<String, dynamic>>.from(
+          v.map((e) => Map<String, dynamic>.from(e)),
+        );
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  static Future<void> saveUserSessions(
+    List<Map<String, dynamic>> sessions,
+  ) async {
+    try {
+      await meta.put('userSessions', sessions);
+    } catch (_) {}
+  }
 }

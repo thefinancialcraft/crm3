@@ -1,11 +1,13 @@
 # Call Log Uploader App - Project Summary
 
 ## Overview
+
 The Call Log Uploader is a Flutter mobile application that automatically reads phone call history from Android devices and uploads it to a Supabase database. It features a dual-interface design with a Developer Mode for monitoring and a WebView-based CRM interface with click-to-call functionality.
 
 ## Core Functionality
 
 ### 1. Call Log Management
+
 - Reads device call logs using the `call_log` package
 - Prevents duplicate uploads using a dual-bucket system:
   - Main Bucket: Holds new logs before upload
@@ -13,23 +15,27 @@ The Call Log Uploader is a Flutter mobile application that automatically reads p
 - Generates unique IDs using phoneNumber_timestamp format
 
 ### 2. Background Sync Service
+
 - Runs continuously using `flutter_background_service`
 - Checks for new calls every minute
 - Implements retry mechanism with exponential backoff (3 attempts)
 - Maintains persistent foreground notification on Android
 
 ### 3. Supabase Integration
+
 - Uploads call logs to Supabase tables
 - Handles API errors (409 duplicates, 400 invalid payloads, 500 server errors)
 - Updates sync metadata with last successful sync time
 
 ### 4. Dual-Interface Design
+
 - Developer Mode Page: Monitoring and control interface
 - WebView Page: CRM interface with native link handling
 
 ## Workflow
 
 ### Data Flow
+
 1. Background service initializes and starts periodic scanning
 2. CallLogService scans device call logs every minute
 3. New logs are checked against synced and pending buckets
@@ -39,6 +45,7 @@ The Call Log Uploader is a Flutter mobile application that automatically reads p
 7. Errors are logged and retried based on type
 
 ### Error Handling
+
 - **Permission Errors**: Explanatory modals with app settings access
 - **Network Errors**: Exponential backoff retry (3 attempts)
 - **API Errors**: Specific handling for different HTTP status codes
@@ -49,6 +56,7 @@ The Call Log Uploader is a Flutter mobile application that automatically reads p
 ## Technical Configuration
 
 ### Environment Versions
+
 - Flutter SDK: 3.35.7 (stable)
 - Dart SDK: 3.9.2
 - Kotlin: 1.9.22 (stable version compatible with AGP 8.7.2)
@@ -60,6 +68,7 @@ The Call Log Uploader is a Flutter mobile application that automatically reads p
 - minSdkVersion: 21
 
 ### Dependencies
+
 ```yaml
 dependencies:
   flutter_inappwebview: ^6.1.5
@@ -81,6 +90,7 @@ dev_dependencies:
 ```
 
 ### Android Permissions
+
 ```xml
 <uses-permission android:name="android.permission.READ_CALL_LOG" />
 <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -105,62 +115,73 @@ dev_dependencies:
 
 ## Database Schema
 
-### call_logs Table
-| Column | Type | Description |
-|--------|------|-------------|
-| id | TEXT (PK) | Unique identifier (phoneNumber_timestamp) |
-| number | TEXT | Caller number |
-| name | TEXT | Caller name (nullable) |
-| call_type | TEXT | incoming/outgoing/missed |
-| duration | INTEGER | Call duration (seconds) |
-| timestamp | TIMESTAMPTZ | Call time |
-| device_id | TEXT | Device unique ID |
-| created_at | TIMESTAMPTZ | Default now() |
+### call_history Table
+
+| Column     | Type        | Description                               |
+| ---------- | ----------- | ----------------------------------------- |
+| id         | TEXT (PK)   | Unique identifier (phoneNumber_timestamp) |
+| number     | TEXT        | Caller number                             |
+| name       | TEXT        | Caller name (nullable)                    |
+| call_type  | TEXT        | incoming/outgoing/missed                  |
+| duration   | INTEGER     | Call duration (seconds)                   |
+| timestamp  | TIMESTAMPTZ | Call time                                 |
+| device_id  | TEXT        | Device unique ID                          |
+| created_at | TIMESTAMPTZ | Default now()                             |
 
 ### sync_meta Table
-| Column | Type | Description |
-|--------|------|-------------|
-| device_id | TEXT (PK) | Device ID |
-| last_synced_at | TIMESTAMPTZ | Last successful sync |
-| last_error | TEXT | Last error message (optional) |
+
+| Column         | Type        | Description                   |
+| -------------- | ----------- | ----------------------------- |
+| device_id      | TEXT (PK)   | Device ID                     |
+| last_synced_at | TIMESTAMPTZ | Last successful sync          |
+| last_error     | TEXT        | Last error message (optional) |
 
 ## UI/UX Design
 
 ### Developer Mode Page
+
 #### Sync Display
+
 - Total contacts, synced contacts, last sync timestamp
 - Current call status ("On Call" / "Idle")
 - Device info (name, model, OS version, app version)
 - Automatic resume from last successful sync point
 
 #### Manual Controls
+
 - Start Sync: Re-establishes sync when automatic sync fails
 - Send Fake Data: Pushes dummy logs for testing
 - Force Refresh / Clear Buckets: Optional buttons
 
 #### Log Display
+
 - Real-time logs of app events, errors, and sync updates
 - Color-coded by level (info, warning, error)
 - Filter and export capabilities
 
 ### In-App WebView Page
+
 #### Layout
+
 - Header (40px height)
   - Left: Title/Logo
   - Right: ⚙️ icon to open Dev Mode Page
 
 #### Features
+
 - Handles tel:, sms:, mailto:, whatsapp:// links
 - JavaScript ↔ Flutter bridge for communication
 - Web app can request device/sync data
 - Flutter can send updates back to web
 
 ## Platform Support
+
 - Android: Full features (call logs, background service)
 - Web: View-only version (CRM interface)
 - iOS: Limited support (no call logs due to platform restrictions)
 
 ## Architecture
+
 ```
 lib/
 ├─ main.dart
@@ -191,27 +212,32 @@ lib/
 ## Key Implementation Details
 
 ### Storage System
+
 - Uses Hive for local storage
 - Two-box system for duplicate prevention
 - Persistent storage across app sessions
 
 ### Retry Mechanism
+
 - Exponential backoff for network failures
 - Specific error handling for different API responses
 - Configurable retry attempts (default: 3)
 
 ### Security & Privacy
+
 - Requires explicit user permission for call log access
 - Device identification for multi-device support
 - Potential for phone number hashing (optional)
 
 ## Build & Deployment
+
 - Android: `flutter build apk --release`
 - Web: `flutter build web`
 - GitHub Actions for CI/CD
 - Play Store compliance with privacy policy
 
 ## Testing Strategy
+
 - Unit tests for retry logic and bucket management
 - Integration tests with mock Supabase client
 - Manual testing for permission flows

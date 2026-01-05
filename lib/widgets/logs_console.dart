@@ -22,7 +22,7 @@ class _LogsConsoleState extends State<LogsConsole> {
   @override
   void initState() {
     super.initState();
-    
+
     // Listen to scroll events to detect user scrolling
     _scrollController.addListener(() {
       // Simple approach: if user is scrolling, set flag to true
@@ -45,7 +45,9 @@ class _LogsConsoleState extends State<LogsConsole> {
 
   void _maybeScrollToTop(int currentLogCount) {
     // Only scroll if a new log was added (count increased) AND user is not scrolling
-    if (currentLogCount > _lastLogCount && _lastLogCount > 0 && !_userScrolling) {
+    if (currentLogCount > _lastLogCount &&
+        _lastLogCount > 0 &&
+        !_userScrolling) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
           _scrollController.animateTo(
@@ -85,35 +87,37 @@ class _LogsConsoleState extends State<LogsConsole> {
     }
   }
 
-  Future<void> _exportLogs(BuildContext context, List<LogEntry> entries) async {
+  Future<void> _exportLogs(List<LogEntry> entries) async {
     try {
       // Reverse back to chronological order for export (oldest first)
       final logsToExport = entries.reversed.toList();
-      
+
       // Use cache directory (doesn't require permissions on Android 10+)
       final dir = await getTemporaryDirectory();
       final filename =
           'persisted_logs_${DateTime.now().toIso8601String().replaceAll(':', '-')}.txt';
       final file = File(p.join(dir.path, filename));
-      
+
       // Prepare log content
-      final lines = logsToExport.map((e) {
-        final tagPart = (e.tag.isNotEmpty) ? '[${e.tag}] ' : '';
-        final cat = e.category.name.toUpperCase();
-        final lvl = e.level.name.toUpperCase();
-        return '[$cat][$lvl] $tagPart${e.message} | ${e.timestamp.toIso8601String()}';
-      }).join('\n');
-      
+      final lines = logsToExport
+          .map((e) {
+            final tagPart = (e.tag.isNotEmpty) ? '[${e.tag}] ' : '';
+            final cat = e.category.name.toUpperCase();
+            final lvl = e.level.name.toUpperCase();
+            return '[$cat][$lvl] $tagPart${e.message} | ${e.timestamp.toIso8601String()}';
+          })
+          .join('\n');
+
       // Write to file
       await file.writeAsString(lines);
-      
+
       // Share file using share_plus (no permissions needed)
       await Share.shareXFiles(
         [XFile(file.path)],
         text: 'Persisted Logs export (${logsToExport.length} entries)',
         subject: 'CRM3 Persisted Logs',
       );
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -124,9 +128,9 @@ class _LogsConsoleState extends State<LogsConsole> {
       }
     } catch (ex) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to export logs: $ex')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to export logs: $ex')));
       }
     }
   }
@@ -136,10 +140,10 @@ class _LogsConsoleState extends State<LogsConsole> {
     final sync = context.watch<SyncProvider>();
     // Reverse logs to show newest first (newest to oldest)
     final logs = sync.filteredLogs.reversed.toList();
-    
+
     // Auto-scroll to top when new log is added ONLY if user is not scrolling
     _maybeScrollToTop(logs.length);
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -179,13 +183,16 @@ class _LogsConsoleState extends State<LogsConsole> {
                     ),
                     const SizedBox(width: 16),
                     ElevatedButton.icon(
-                      onPressed: () => _exportLogs(context, sync.filteredLogs),
+                      onPressed: () => _exportLogs(sync.filteredLogs),
                       icon: const Icon(Icons.download, size: 18),
                       label: const Text('Export'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF5E17EB),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -278,15 +285,12 @@ class _LogsConsoleState extends State<LogsConsole> {
     final color = _colorForLevel(e.level);
     final icon = _iconForLevel(e.level);
     final tag = (e.tag.isNotEmpty) ? '[${e.tag}] ' : '';
-    
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         border: Border(
-          bottom: BorderSide(
-            color: Colors.grey.shade200,
-            width: 0.5,
-          ),
+          bottom: BorderSide(color: Colors.grey.shade200, width: 0.5),
         ),
       ),
       child: Column(
@@ -343,18 +347,19 @@ class _LogsConsoleState extends State<LogsConsole> {
           // Main log message with better formatting
           Text(
             '$tag${e.message}',
-            style: TextStyle(
-              color: Colors.black87,
-              fontSize: 14,
-              height: 1.4,
-            ),
+            style: TextStyle(color: Colors.black87, fontSize: 14, height: 1.4),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFilterChip(BuildContext context, String label, bool selected, VoidCallback onSelected) {
+  Widget _buildFilterChip(
+    BuildContext context,
+    String label,
+    bool selected,
+    VoidCallback onSelected,
+  ) {
     return ChoiceChip(
       label: Text(label),
       selected: selected,
@@ -374,8 +379,13 @@ class _LogsConsoleState extends State<LogsConsole> {
     );
   }
 
-  Widget _buildLevelFilterChip(BuildContext context, String label, bool selected, 
-      VoidCallback onSelected, [Color? color]) {
+  Widget _buildLevelFilterChip(
+    BuildContext context,
+    String label,
+    bool selected,
+    VoidCallback onSelected, [
+    Color? color,
+  ]) {
     return ChoiceChip(
       label: Text(label),
       selected: selected,
@@ -401,8 +411,6 @@ class _LogsConsoleState extends State<LogsConsole> {
         return Colors.purple;
       case LogCategory.ui:
         return Colors.blue;
-      default:
-        return Colors.grey;
     }
   }
 }

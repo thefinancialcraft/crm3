@@ -6,10 +6,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 /// Log categories (broad grouping)
-enum LogCategory { UI, FUNCTION }
+enum LogCategory { ui, function }
 
 /// Log levels for severity and color coding
-enum LogLevel { INFO, SUCCESS, WARNING, ERROR }
+enum LogLevel { info, success, warning, error }
 
 class LogEntry {
   final LogCategory category;
@@ -33,7 +33,7 @@ class LogEntry {
 
   @override
   String toString() {
-    if (category == LogCategory.UI) {
+    if (category == LogCategory.ui) {
       return '[UI] $message | $timeString';
     } else {
       final fn = functionName ?? 'unknown';
@@ -60,9 +60,9 @@ class LogManager {
   Stream<LogEntry> get stream => _controller.stream;
 
   /// Add a UI log
-  void logUI(String message, {LogLevel level = LogLevel.INFO}) {
+  void logUI(String message, {LogLevel level = LogLevel.info}) {
     final entry = LogEntry(
-      category: LogCategory.UI,
+      category: LogCategory.ui,
       level: level,
       message: message,
     );
@@ -73,10 +73,10 @@ class LogManager {
   void logFunction(
     String functionName,
     String message, {
-    LogLevel level = LogLevel.INFO,
+    LogLevel level = LogLevel.info,
   }) {
     final entry = LogEntry(
-      category: LogCategory.FUNCTION,
+      category: LogCategory.function,
       level: level,
       message: message,
       functionName: functionName,
@@ -87,33 +87,33 @@ class LogManager {
   /// Convenience wrappers
   void info(String tagOrFn, String message, {bool isFunction = false}) {
     if (isFunction) {
-      logFunction(tagOrFn, message, level: LogLevel.INFO);
+      logFunction(tagOrFn, message, level: LogLevel.info);
     } else {
-      logUI(message, level: LogLevel.INFO);
+      logUI(message, level: LogLevel.info);
     }
   }
 
   void success(String tagOrFn, String message, {bool isFunction = false}) {
     if (isFunction) {
-      logFunction(tagOrFn, message, level: LogLevel.SUCCESS);
+      logFunction(tagOrFn, message, level: LogLevel.success);
     } else {
-      logUI(message, level: LogLevel.SUCCESS);
+      logUI(message, level: LogLevel.success);
     }
   }
 
   void warning(String tagOrFn, String message, {bool isFunction = false}) {
     if (isFunction) {
-      logFunction(tagOrFn, message, level: LogLevel.WARNING);
+      logFunction(tagOrFn, message, level: LogLevel.warning);
     } else {
-      logUI(message, level: LogLevel.WARNING);
+      logUI(message, level: LogLevel.warning);
     }
   }
 
   void error(String tagOrFn, String message, {bool isFunction = false}) {
     if (isFunction) {
-      logFunction(tagOrFn, message, level: LogLevel.ERROR);
+      logFunction(tagOrFn, message, level: LogLevel.error);
     } else {
-      logUI(message, level: LogLevel.ERROR);
+      logUI(message, level: LogLevel.error);
     }
   }
 
@@ -151,8 +151,8 @@ class LogManager {
     // also notify listeners with a special UI message
     _controller.add(
       LogEntry(
-        category: LogCategory.UI,
-        level: LogLevel.INFO,
+        category: LogCategory.ui,
+        level: LogLevel.info,
         message: 'Logs cleared',
       ),
     );
@@ -199,7 +199,8 @@ class LogManager {
     if (kDebugMode) {
       debugPrint(colored);
     } else {
-      print(text); // avoid ANSI output in release
+      // Avoid printing in release to keep logs clean
+      // or optionally log to a file/service
     }
   }
 
@@ -207,14 +208,14 @@ class LogManager {
     // ANSI colors
     // INFO / UI -> cyan, SUCCESS -> green, WARNING -> yellow, ERROR -> red
     switch (e.level) {
-      case LogLevel.SUCCESS:
+      case LogLevel.success:
         return '\x1B[32m';
-      case LogLevel.WARNING:
+      case LogLevel.warning:
         return '\x1B[33m';
-      case LogLevel.ERROR:
+      case LogLevel.error:
         return '\x1B[31m';
-      case LogLevel.INFO:
-        if (e.category == LogCategory.UI) return '\x1B[36m';
+      case LogLevel.info:
+        if (e.category == LogCategory.ui) return '\x1B[36m';
         return '\x1B[34m';
     }
   }

@@ -3,6 +3,7 @@
 ## Phase 1: Project Setup & Configuration
 
 ### 1. Environment Setup
+
 - [ ] Install Flutter SDK 3.35.7
 - [ ] Verify Dart SDK 3.9.2
 - [ ] Install JDK 17 and set JAVA_HOME
@@ -12,12 +13,14 @@
 - [ ] Configure Kotlin to 1.9.22 in android/build.gradle
 
 ### 2. Flutter Project Initialization
+
 - [ ] Create new Flutter project
 - [ ] Update pubspec.yaml with all required dependencies
 - [ ] Run `flutter pub get` to install dependencies
 - [ ] Verify all plugins are compatible and build successfully
 
 ### 3. Android Configuration
+
 - [ ] Update AndroidManifest.xml with required permissions:
   - [ ] READ_CALL_LOG
   - [ ] READ_CONTACTS
@@ -28,8 +31,9 @@
 - [ ] Configure build.gradle files with correct SDK versions
 
 ### 4. Supabase Setup
+
 - [ ] Create Supabase project
-- [ ] Create call_logs table with proper schema
+- [ ] Create call_history table with proper schema
 - [ ] Create sync_meta table with proper schema
 - [ ] Configure Row Level Security (RLS) policies
 - [ ] Add Supabase credentials to .env file
@@ -37,6 +41,7 @@
 ## Phase 2: Core Architecture Implementation
 
 ### 5. Project Structure Setup
+
 - [ ] Create lib/services/ directory
 - [ ] Create lib/models/ directory
 - [ ] Create lib/pages/ directory
@@ -45,6 +50,7 @@
 - [ ] Create lib/providers/ directory
 
 ### 6. Data Model Implementation
+
 - [ ] Implement CallLogModel class
   - [ ] Constructor with all required fields
   - [ ] toJson() method for serialization
@@ -52,6 +58,7 @@
 - [ ] Implement error handling for data parsing
 
 ### 7. Local Storage Service
+
 - [ ] Implement StorageService with Hive
   - [ ] Initialize Hive with Flutter
   - [ ] Create callBucket box
@@ -60,6 +67,7 @@
 - [ ] Add error handling for storage operations
 
 ### 8. Utility Functions
+
 - [ ] Implement Retry utility with exponential backoff
   - [ ] Configurable retry attempts (default: 3)
   - [ ] Exponential delay between retries
@@ -69,12 +77,13 @@
 ## Phase 3: Core Functionality Implementation
 
 ### 9. Call Log Service
+
 - [ ] Implement CallLogService
   - [ ] scanAndEnqueueNewCalls() method
   - [ ] Platform-specific implementation (exclude Web)
   - [ ] Unique ID generation (phoneNumber_timestamp)
   - [ ] Duplicate prevention using bucket system
-  - [ ] Call type mapping (_mapType method)
+  - [ ] Call type mapping (\_mapType method)
 - [ ] Add permission error handling
   - [ ] Check for READ_CALL_LOG permission
   - [ ] Show explanatory modal when permission denied
@@ -82,6 +91,7 @@
 - [ ] Add data parsing error handling
 
 ### 10. Sync Service
+
 - [ ] Implement SyncService
   - [ ] syncPending() method
   - [ ] Integration with Supabase client
@@ -98,6 +108,7 @@
   - [ ] 500 server error handling (5-minute pause)
 
 ### 11. Background Service
+
 - [ ] Implement BackgroundService
   - [ ] setup() method for service configuration
   - [ ] onStart() method for service initialization
@@ -115,6 +126,7 @@
 ## Phase 4: UI Implementation
 
 ### 12. Main Application Structure
+
 - [ ] Implement main.dart
   - [ ] Initialize StorageService
   - [ ] Load .env file
@@ -123,6 +135,7 @@
 - [ ] Implement app.dart with proper routing
 
 ### 13. Developer Mode Page
+
 - [ ] Create dev_mode_page.dart
   - [ ] Sync Display section
     - [ ] Total contacts display
@@ -142,6 +155,7 @@
     - [ ] Copy to clipboard functionality
 
 ### 14. WebView Page
+
 - [ ] Create inapp_webview_page.dart
   - [ ] Header implementation (40px height)
     - [ ] Left: Title/Logo
@@ -154,6 +168,7 @@
     - [ ] Send updates back to web capability
 
 ### 15. Reusable Widgets
+
 - [ ] Create sync_display.dart
 - [ ] Create manual_controls.dart
 - [ ] Create logs_console.dart
@@ -161,6 +176,7 @@
 ## Phase 5: State Management & Providers
 
 ### 16. Provider Implementation
+
 - [ ] Implement SyncProvider
   - [ ] Sync status management
   - [ ] Log streaming
@@ -170,6 +186,7 @@
 ## Phase 6: Error Handling & Logging
 
 ### 17. Comprehensive Error Handling
+
 - [ ] Implement permission error handling across all services
 - [ ] Implement network error handling with retry mechanisms
 - [ ] Implement API error handling for all Supabase responses
@@ -178,6 +195,7 @@
 - [ ] Implement background throttling detection and handling
 
 ### 18. Logging Service
+
 - [ ] Implement LoggerService
   - [ ] Structured logging for all operations
   - [ ] Error logging with full stack traces
@@ -187,17 +205,20 @@
 ## Phase 7: Testing & Quality Assurance
 
 ### 19. Unit Testing
+
 - [ ] Write tests for Retry utility
 - [ ] Write tests for bucket logic
 - [ ] Write tests for ID generation
 - [ ] Write tests for CallLogModel serialization/deserialization
 
 ### 20. Integration Testing
+
 - [ ] Write tests for sync flow with mock Supabase client
 - [ ] Write tests for background service integration
 - [ ] Write tests for WebView bridge communication
 
 ### 21. Manual Testing
+
 - [ ] Test permission flows
 - [ ] Test background sync while app is killed
 - [ ] Test WebView bridge messages
@@ -206,18 +227,21 @@
 ## Phase 8: Finalization & Deployment
 
 ### 22. Final Configuration
+
 - [ ] Verify all environment configurations
 - [ ] Test on multiple Android versions
 - [ ] Optimize for battery usage
 - [ ] Verify cross-platform compatibility
 
 ### 23. Documentation
+
 - [ ] Update README with setup instructions
 - [ ] Document Supabase table schemas
 - [ ] Document error handling procedures
 - [ ] Document troubleshooting steps
 
 ### 24. Deployment Preparation
+
 - [ ] Prepare Play Store privacy policy
 - [ ] Configure build signing for release
 - [ ] Test release build

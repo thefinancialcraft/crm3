@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'providers/sync_provider.dart';
 import 'utils/device_utils.dart';
 import 'services/notification_service.dart';
-import 'services/call_log_service_v2.dart';
+import 'services/call_log_service.dart';
 import 'pages/inapp_webview_page.dart';
 
 class App extends StatefulWidget {
@@ -23,7 +23,7 @@ class _AppState extends State<App> {
   Future<void> _initializeServices() async {
     // Initialize notifications first
     await NotificationService.initialize();
-    
+
     // Initialize call log service
     final callSvc = CallLogService();
     await callSvc.initializeCallStateListener();
@@ -35,11 +35,9 @@ class _AppState extends State<App> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ensureDeviceId(context);
     });
-    
+
     // Show only the InAppWebViewPage as the main page
-    return const Scaffold(
-      body: SafeArea(child: InAppWebViewPage()),
-    );
+    return const Scaffold(body: SafeArea(child: InAppWebViewPage()));
   }
 
   void _ensureDeviceId(BuildContext context) {

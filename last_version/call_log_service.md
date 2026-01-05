@@ -9,23 +9,23 @@ import 'package:flutter/material.dart';
 import 'constants.dart';
 
 class CallLogService {
-  late SupabaseClient _supabase;
-  Timer? _autoSyncTimer;
-  // Timer? _callLogCheckTimer; // removed unused field
-  final int _autoSyncIntervalSeconds = 60; // auto-sync every 60s (adjustable)
-  final String _deviceId = 'device_1';
-  final String _syncMetaTable = 'sync_meta';
-  int? _lastKnownCallCount;
+late SupabaseClient \_supabase;
+Timer? \_autoSyncTimer;
+// Timer? \_callLogCheckTimer; // removed unused field
+final int \_autoSyncIntervalSeconds = 60; // auto-sync every 60s (adjustable)
+final String \_deviceId = 'device_1';
+final String \_syncMetaTable = 'sync_meta';
+int? \_lastKnownCallCount;
 
-  DateTime? _lastSyncTime;
-  int _lastSyncCount = 0;
+DateTime? \_lastSyncTime;
+int \_lastSyncCount = 0;
 
-  // Callback for sync updates
-  Function? onSyncComplete;
+// Callback for sync updates
+Function? onSyncComplete;
 
-  // Background service initialization
-  static Future<void> initializeBackgroundService() async {
-    final service = FlutterBackgroundService();
+// Background service initialization
+static Future<void> initializeBackgroundService() async {
+final service = FlutterBackgroundService();
 
     await service.configure(
       androidConfiguration: AndroidConfiguration(
@@ -43,12 +43,13 @@ class CallLogService {
         onBackground: onIosBackground,
       ),
     );
-  }
 
-  // Background callback for Android and iOS foreground
-  @pragma('vm:entry-point')
-  static Future<void> backgroundCallback(ServiceInstance service) async {
-    DartPluginRegistrant.ensureInitialized();
+}
+
+// Background callback for Android and iOS foreground
+@pragma('vm:entry-point')
+static Future<void> backgroundCallback(ServiceInstance service) async {
+DartPluginRegistrant.ensureInitialized();
 
     // Create instance and initialize
     final callLogService = CallLogService();
@@ -65,20 +66,21 @@ class CallLogService {
     Timer.periodic(const Duration(seconds: 30), (timer) async {
       await callLogService.checkAndSyncNewCalls();
     });
-  }
 
-  // iOS background handler
-  @pragma('vm:entry-point')
-  static bool onIosBackground(ServiceInstance service) {
-    WidgetsFlutterBinding.ensureInitialized();
-    return true;
-  }
+}
 
-  // Check for new calls and sync if found
-  Future<void> checkAndSyncNewCalls() async {
-    try {
-      final logs = await readCallLogs();
-      if (logs == null) return;
+// iOS background handler
+@pragma('vm:entry-point')
+static bool onIosBackground(ServiceInstance service) {
+WidgetsFlutterBinding.ensureInitialized();
+return true;
+}
+
+// Check for new calls and sync if found
+Future<void> checkAndSyncNewCalls() async {
+try {
+final logs = await readCallLogs();
+if (logs == null) return;
 
       final currentCount = logs.length;
 
@@ -97,43 +99,44 @@ class CallLogService {
     } catch (e) {
       debugPrint('Error checking for new calls: $e');
     }
-  }
 
-  CallLogService() {
-    _initSupabase();
-  }
+}
 
-  void _initSupabase() {
-    _supabase = Supabase.instance.client;
-  }
+CallLogService() {
+\_initSupabase();
+}
 
-  Future<bool> requestPermission() async {
-    // For Android, we need READ_CALL_LOG permission
-    // The permission_handler package uses Permission.phone for call log permissions
-    final status = await Permission.phone.request();
-    return status == PermissionStatus.granted;
-  }
+void \_initSupabase() {
+\_supabase = Supabase.instance.client;
+}
 
-  Future<List<CallLogEntry>?> readCallLogs() async {
-    try {
-      debugPrint('Reading call logs from device...');
-      final Iterable<CallLogEntry> callLogs = await CallLog.get();
-      debugPrint('Successfully read ${callLogs.length} call logs');
-      return callLogs.toList();
-    } catch (e) {
-      // Using debugPrint instead of print for development only
-      debugPrint('Error reading call logs: $e');
-      return null;
-    }
-  }
+Future<bool> requestPermission() async {
+// For Android, we need READ_CALL_LOG permission
+// The permission_handler package uses Permission.phone for call log permissions
+final status = await Permission.phone.request();
+return status == PermissionStatus.granted;
+}
 
-  /// Uploads only call logs that are newer than the last synced timestamp.
-  /// Uses a small `sync_meta` table to store the last synced timestamp per device.
-  /// Returns number of records uploaded, or -1 on error
-  Future<int> uploadNewCallLogs() async {
-    try {
-      final lastSyncedMs = await _getLastSyncedTimestampMs();
-      debugPrint('Last synced timestamp (ms): $lastSyncedMs');
+Future<List<CallLogEntry>?> readCallLogs() async {
+try {
+debugPrint('Reading call logs from device...');
+final Iterable<CallLogEntry> callLogs = await CallLog.get();
+debugPrint('Successfully read ${callLogs.length} call logs');
+return callLogs.toList();
+} catch (e) {
+// Using debugPrint instead of print for development only
+debugPrint('Error reading call logs: $e');
+return null;
+}
+}
+
+/// Uploads only call logs that are newer than the last synced timestamp.
+/// Uses a small `sync_meta` table to store the last synced timestamp per device.
+/// Returns number of records uploaded, or -1 on error
+Future<int> uploadNewCallLogs() async {
+try {
+final lastSyncedMs = await \_getLastSyncedTimestampMs();
+debugPrint('Last synced timestamp (ms): $lastSyncedMs');
 
       final callLogs = await readCallLogs();
       if (callLogs == null || callLogs.isEmpty) {
@@ -143,7 +146,7 @@ class CallLogService {
 
       // Get existing call logs from Supabase for this device
       final existingLogs = await _supabase
-          .from('call_logs')
+          .from('call_history')
           .select('number, timestamp, duration, call_type')
           .eq('device_id', _deviceId);
 
@@ -196,7 +199,7 @@ class CallLogService {
 
       debugPrint('Uploading batch of ${logsData.length} records...');
 
-      await _supabase.from('call_logs').insert(logsData).select();
+      await _supabase.from('call_history').insert(logsData).select();
 
       // Update last synced timestamp to the maximum timestamp we uploaded
       final maxTs = newLogs
@@ -215,16 +218,17 @@ class CallLogService {
       debugPrint('Stack trace: $stackTrace');
       return -1;
     }
-  }
 
-  Future<int> _getLastSyncedTimestampMs() async {
-    try {
-      final resp =
-          await _supabase
-              .from(_syncMetaTable)
-              .select('last_synced_at')
-              .eq('device_id', _deviceId)
-              .maybeSingle();
+}
+
+Future<int> \_getLastSyncedTimestampMs() async {
+try {
+final resp =
+await \_supabase
+.from(\_syncMetaTable)
+.select('last_synced_at')
+.eq('device_id', \_deviceId)
+.maybeSingle();
 
       if (resp == null) return 0;
 
@@ -236,12 +240,13 @@ class CallLogService {
       debugPrint('Error fetching last synced timestamp: $e');
       return 0;
     }
-  }
 
-  Future<void> _updateLastSyncedTimestampMs(int tsMs) async {
-    try {
-      final dtIso =
-          DateTime.fromMillisecondsSinceEpoch(tsMs).toUtc().toIso8601String();
+}
+
+Future<void> \_updateLastSyncedTimestampMs(int tsMs) async {
+try {
+final dtIso =
+DateTime.fromMillisecondsSinceEpoch(tsMs).toUtc().toIso8601String();
 
       // Upsert into sync_meta table for this device
       await _supabase.from(_syncMetaTable).upsert({
@@ -251,34 +256,35 @@ class CallLogService {
     } catch (e) {
       debugPrint('Error updating last synced timestamp: $e');
     }
-  }
 
-  /// Start automatic periodic syncing while the app is active.
-  void startAutoSync(Function? onSync) {
-    onSyncComplete = onSync;
-    _autoSyncTimer?.cancel();
-    _autoSyncTimer = Timer.periodic(
-      Duration(seconds: _autoSyncIntervalSeconds),
-      (timer) async {
-        debugPrint('[AutoSync] Triggering automatic sync...');
-        final syncedCount = await uploadNewCallLogs();
-        if (syncedCount > 0 && onSyncComplete != null) {
-          onSyncComplete!();
-        }
-      },
-    );
-  }
+}
 
-  void stopAutoSync() {
-    _autoSyncTimer?.cancel();
-    _autoSyncTimer = null;
-  }
+/// Start automatic periodic syncing while the app is active.
+void startAutoSync(Function? onSync) {
+onSyncComplete = onSync;
+\_autoSyncTimer?.cancel();
+\_autoSyncTimer = Timer.periodic(
+Duration(seconds: \_autoSyncIntervalSeconds),
+(timer) async {
+debugPrint('[AutoSync] Triggering automatic sync...');
+final syncedCount = await uploadNewCallLogs();
+if (syncedCount > 0 && onSyncComplete != null) {
+onSyncComplete!();
+}
+},
+);
+}
 
-  Future<bool> uploadCallLogs(List<CallLogEntry> callLogs) async {
-    try {
-      debugPrint(
-        'Preparing to upload ${callLogs.length} call logs to Supabase...',
-      );
+void stopAutoSync() {
+\_autoSyncTimer?.cancel();
+\_autoSyncTimer = null;
+}
+
+Future<bool> uploadCallLogs(List<CallLogEntry> callLogs) async {
+try {
+debugPrint(
+'Preparing to upload ${callLogs.length} call logs to Supabase...',
+);
 
       final List<Map<String, dynamic>> logsData =
           callLogs.map((log) {
@@ -294,7 +300,7 @@ class CallLogService {
                         log.timestamp!,
                       ).toIso8601String()
                       : DateTime.now().toIso8601String(),
-              'device_id': 'device_1', 
+              'device_id': 'device_1',
               'created_at': DateTime.now().toUtc().toIso8601String(),
             };
           }).toList();
@@ -303,7 +309,7 @@ class CallLogService {
 
       // Batch insert all call logs
       final response =
-          await _supabase.from('call_logs').insert(logsData).select();
+          await _supabase.from('call_history').insert(logsData).select();
 
       debugPrint('Upload response: $response');
 
@@ -317,11 +323,12 @@ class CallLogService {
       debugPrint('Stack trace: $stackTrace');
       return false;
     }
-  }
 
-  Future<bool> sendFakeData() async {
-    try {
-      debugPrint('Sending fake test data to Supabase...');
+}
+
+Future<bool> sendFakeData() async {
+try {
+debugPrint('Sending fake test data to Supabase...');
 
       // Generate fake call log data
       final fakeData = [
@@ -374,7 +381,7 @@ class CallLogService {
       // Insert fake data with error handling
       try {
         final response =
-            await _supabase.from('call_logs').insert(fakeData).select();
+            await _supabase.from('call_history').insert(fakeData).select();
 
         debugPrint('Fake data upload response: $response');
 
@@ -393,38 +400,39 @@ class CallLogService {
       debugPrint('Stack trace: $stackTrace');
       return false;
     }
-  }
 
-  String _getCallTypeString(CallType? callType) {
-    switch (callType) {
-      case CallType.incoming:
-        return 'incoming';
-      case CallType.outgoing:
-        return 'outgoing';
-      case CallType.missed:
-        return 'missed';
-      case CallType.blocked:
-        return 'blocked';
-      case CallType.rejected:
-        return 'rejected';
-      case CallType.answeredExternally:
-        return 'answered_externally';
-      default:
-        return 'unknown';
-    }
-  }
+}
 
-  // Get last sync info
-  DateTime? getLastSyncTime() => _lastSyncTime;
-  int getLastSyncCount() => _lastSyncCount;
+String \_getCallTypeString(CallType? callType) {
+switch (callType) {
+case CallType.incoming:
+return 'incoming';
+case CallType.outgoing:
+return 'outgoing';
+case CallType.missed:
+return 'missed';
+case CallType.blocked:
+return 'blocked';
+case CallType.rejected:
+return 'rejected';
+case CallType.answeredExternally:
+return 'answered_externally';
+default:
+return 'unknown';
+}
+}
 
-  // Get latest call log stats
-  Future<Map<String, dynamic>> getCallLogStats() async {
-    try {
-      final logs = await readCallLogs();
-      if (logs == null || logs.isEmpty) {
-        return {'total': 0, 'latest': null, 'missed': 0};
-      }
+// Get last sync info
+DateTime? getLastSyncTime() => \_lastSyncTime;
+int getLastSyncCount() => \_lastSyncCount;
+
+// Get latest call log stats
+Future<Map<String, dynamic>> getCallLogStats() async {
+try {
+final logs = await readCallLogs();
+if (logs == null || logs.isEmpty) {
+return {'total': 0, 'latest': null, 'missed': 0};
+}
 
       // Sort by timestamp descending
       logs.sort((a, b) => (b.timestamp ?? 0).compareTo(a.timestamp ?? 0));
@@ -441,5 +449,6 @@ class CallLogService {
       debugPrint('Error getting call log stats: $e');
       return {'total': 0, 'latest': null, 'missed': 0};
     }
-  }
+
+}
 }

@@ -10,7 +10,7 @@ class DeviceUtils {
       LoggerService.info('DeviceUtils.getDeviceId -> web-unknown');
       return 'web-unknown';
     }
-    
+
     final info = DeviceInfoPlugin();
     try {
       if (Platform.isAndroid) {
@@ -34,31 +34,44 @@ class DeviceUtils {
       'osVersion': 'unknown',
       'deviceName': 'unknown',
       'model': 'unknown',
+      'brand': 'unknown',
+      'sdkVersion': 'unknown',
+      'androidId': 'unknown',
     };
-    
+
     if (kIsWeb) {
       out['deviceId'] = 'web-unknown';
       out['osVersion'] = 'Web';
       out['deviceName'] = 'Web Browser';
       out['model'] = 'Web';
+      out['brand'] = 'Web';
+      out['sdkVersion'] = 'N/A';
+      out['androidId'] = 'N/A';
       LoggerService.info('DeviceUtils.getDeviceInfo -> web');
       return out;
     }
-    
+
     final info = DeviceInfoPlugin();
     try {
       if (Platform.isAndroid) {
         final a = await info.androidInfo;
         out['deviceId'] = a.id;
-        out['osVersion'] = '${a.version.release} (SDK ${a.version.sdkInt})';
+        out['osVersion'] = a.version.release;
         out['deviceName'] = a.device;
         out['model'] = a.model;
+        out['brand'] = a.brand;
+        out['sdkVersion'] = a.version.sdkInt.toString();
+        out['androidId'] = a
+            .id; // androidInfo.id IS the android_id usually, or similar unique ID
       } else if (Platform.isIOS) {
         final i = await info.iosInfo;
         out['deviceId'] = i.identifierForVendor ?? out['deviceId']!;
         out['osVersion'] = '${i.systemName} ${i.systemVersion}';
         out['deviceName'] = i.name;
         out['model'] = i.utsname.machine;
+        out['brand'] = 'Apple';
+        out['sdkVersion'] = 'N/A';
+        out['androidId'] = 'N/A';
       }
     } catch (e) {
       LoggerService.warn('getDeviceInfo failed: $e');

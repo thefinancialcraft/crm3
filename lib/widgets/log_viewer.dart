@@ -70,7 +70,7 @@ class _LogViewerState extends State<LogViewer> {
     }
   }
 
-  Future<void> _exportLogs(BuildContext context, List<LogEntry> entries) async {
+  Future<void> _exportLogs(List<LogEntry> entries) async {
     try {
       final logsToExport = entries.reversed.toList();
 
@@ -159,7 +159,7 @@ class _LogViewerState extends State<LogViewer> {
                     ),
                     const SizedBox(width: 16),
                     ElevatedButton.icon(
-                      onPressed: () => _exportLogs(context, sync.filteredLogs),
+                      onPressed: () => _exportLogs(sync.filteredLogs),
                       icon: const Icon(Icons.download, size: 18),
                       label: const Text('Export'),
                       style: ElevatedButton.styleFrom(
@@ -264,7 +264,7 @@ class _LogViewerState extends State<LogViewer> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: SelectableText(
-        '$timestamp $levelPrefix${e.category.name.toLowerCase()}: ${tag}${e.message}',
+        '$timestamp $levelPrefix${e.category.name.toLowerCase()}: $tag${e.message}',
         style: TextStyle(
           fontFamily: 'monospace',
           fontSize: 12,
