@@ -38,17 +38,28 @@ class CallService : Service() {
     private lateinit var telephonyManager: TelephonyManager
     private var isListening = false
 
+    companion object {
+        var currentPhoneNumber: String? = null
+    }
+
     private val phoneStateListener = object : PhoneStateListener() {
         override fun onCallStateChanged(state: Int, phoneNumber: String?) {
             super.onCallStateChanged(state, phoneNumber)
+            if (phoneNumber != null && phoneNumber.isNotEmpty()) {
+                currentPhoneNumber = phoneNumber
+            }
             val stateStr = when (state) {
                 TelephonyManager.CALL_STATE_RINGING -> "RINGING"
                 TelephonyManager.CALL_STATE_OFFHOOK -> "OFFHOOK"
-                TelephonyManager.CALL_STATE_IDLE -> "IDLE"
+                TelephonyManager.CALL_STATE_IDLE -> {
+                    val finalNum = currentPhoneNumber
+                    currentPhoneNumber = null // Clear on Idle
+                    "IDLE"
+                }
                 else -> "IDLE"
             }
-            Log.d("CallService", "State: $stateStr, Number: $phoneNumber")
-            handleCallState(stateStr, phoneNumber)
+            Log.d("CallService", "Native State: $stateStr, Number: $phoneNumber | Master: $currentPhoneNumber")
+            handleCallState(stateStr, phoneNumber ?: currentPhoneNumber)
         }
     }
 
@@ -58,33 +69,20 @@ class CallService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("CallService", "onCreate")
-        
-        // 1. Foreground Notification
         createNotificationChannel()
         startForeground(9999, createNotification())
-
-        // 2. Setup Telephony
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
         isListening = true
-
-        // 3. Setup WindowManager
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        
-        // 4. Pre-warm Flutter Engine
         initFlutterEngine()
     }
 
     private fun initFlutterEngine() {
         if (flutterEngine == null) {
-            Log.d("CallService", "Initializing FlutterEngine")
             flutterEngine = FlutterEngine(this)
-            
-            // Register Plugins (Crucial for SharedPreferences, etc.)
             GeneratedPluginRegistrant.registerWith(flutterEngine!!)
             
-            // Setup MethodChannel
             methodChannel = MethodChannel(flutterEngine!!.dartExecutor.binaryMessenger, CHANNEL_NAME)
             methodChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -92,15 +90,20 @@ class CallService : Service() {
                         hideOverlay()
                         result.success(null)
                     }
-                    "resizeOverlay" -> {
-                        // Handle resize if needed
+                    "getNativeNumber" -> {
+                        result.success(currentPhoneNumber)
+                    }
+                    "updateLookupResult" -> {
+                        val data = call.arguments as? Map<String, Any>
+                        if (data != null) {
+                            methodChannel?.invokeMethod("updateData", data)
+                        }
                         result.success(null)
                     }
                     else -> result.notImplemented()
                 }
             }
 
-            // Execute Entrypoint
             val flutterLoader = FlutterInjector.instance().flutterLoader()
             flutterLoader.startInitialization(this)
             flutterLoader.ensureInitializationComplete(this, null)
@@ -122,17 +125,41 @@ class CallService : Service() {
         return START_STICKY
     }
 
+    private var lastNumber: String? = null
+    private var lastState: String? = null
+    private var isIncoming: Boolean = false
+
     private fun handleCallState(state: String?, number: String?) {
-        if (state == "IDLE" || state == TelephonyManager.EXTRA_STATE_IDLE) {
-            hideOverlay()
-        } else if (state == "RINGING" || state == "OFFHOOK" || state == TelephonyManager.EXTRA_STATE_RINGING || state == TelephonyManager.EXTRA_STATE_OFFHOOK) {
-            initFlutterEngine()
-            showOverlay()
-            
-            val callType = if (state == "RINGING" || state == TelephonyManager.EXTRA_STATE_RINGING) "Incoming Call" else "Active Call"
-            val contactName = if (number != null) getContactName(number) else null
-            
-            updateFlutterData(number ?: "Unknown", callType, contactName)
+        if (state == lastState && number == lastNumber) return
+        
+        lastState = state
+        lastNumber = number
+
+        if (number != null) {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            prefs.edit().putString("flutter.current_call_number", number).apply()
+        }
+
+        when (state) {
+            "IDLE", TelephonyManager.EXTRA_STATE_IDLE -> {
+                isIncoming = false
+                hideOverlay()
+            }
+            "RINGING", TelephonyManager.EXTRA_STATE_RINGING -> {
+                isIncoming = true
+                initFlutterEngine()
+                showOverlay()
+                updateFlutterData(number ?: currentPhoneNumber ?: "Unknown", "RINGING", null)
+            }
+            "OFFHOOK", TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+                initFlutterEngine()
+                showOverlay()
+                if (!isIncoming) {
+                    updateFlutterData(number ?: currentPhoneNumber ?: "Unknown", "DIALING", null)
+                } else {
+                    updateFlutterData(number ?: currentPhoneNumber ?: "Unknown", "ACTIVE", null)
+                }
+            }
         }
     }
 
@@ -140,43 +167,18 @@ class CallService : Service() {
         val data = hashMapOf(
             "number" to number,
             "status" to status,
-            "isPersonal" to (name != null) // If visible in contacts, it's 'Personal' usually? Or logic implies CRM vs Personal. 
+            "isPersonal" to true
         )
         if (name != null) data["name"] = name
-        
         methodChannel?.invokeMethod("updateData", data)
-    }
-
-    private fun getContactName(phoneNumber: String): String? {
-        try {
-            val uri = android.net.Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, android.net.Uri.encode(phoneNumber))
-            val projection = arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME)
-            val cursor = contentResolver.query(uri, projection, null, null, null)
-            var name: String? = null
-            if (cursor != null) {
-                if (cursor.moveToFirst()) {
-                    name = cursor.getString(0)
-                }
-                cursor.close()
-            }
-            return name
-        } catch (e: Exception) {
-            Log.e("CallService", "Error looking up contact", e)
-            return null
-        }
     }
 
     private fun showOverlay() {
         if (isOverlayShown) return
         if (flutterEngine == null) return
-
-        Log.d("CallService", "Showing Overlay")
-
-        // Create FlutterView
         flutterView = FlutterView(this, FlutterTextureView(this))
         flutterView?.attachToFlutterEngine(flutterEngine!!)
 
-        // Window Params
         val layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -190,25 +192,22 @@ class CallService : Service() {
             PixelFormat.TRANSLUCENT
         )
         layoutParams.gravity = Gravity.TOP
-        layoutParams.y = 100 // Top margin
+        layoutParams.y = 100
 
-        // Drag Handling
         flutterView?.setOnTouchListener(object : View.OnTouchListener {
             private var initialY = 0
             private var initialTouchY = 0f
-
             override fun onTouch(v: View?, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         initialY = layoutParams.y
                         initialTouchY = event.rawY
-                        return false // Let Flutter handle clicks
+                        return false
                     }
                     MotionEvent.ACTION_MOVE -> {
-                         // Simple vertical drag
                          layoutParams.y = initialY + (event.rawY - initialTouchY).toInt()
                          windowManager?.updateViewLayout(flutterView, layoutParams)
-                         return true // Consume drag
+                         return true
                     }
                 }
                 return false
@@ -226,7 +225,6 @@ class CallService : Service() {
     private fun hideOverlay() {
         if (!isOverlayShown) return
         try {
-            Log.d("CallService", "Hiding Overlay")
             windowManager?.removeView(flutterView)
             flutterView?.detachFromFlutterEngine()
             flutterView = null

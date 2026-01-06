@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -14,9 +12,13 @@ class CallOverlayApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: CallOverlayScreen(),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6366F1)),
+      ),
+      home: const CallOverlayScreen(),
     );
   }
 }
@@ -36,33 +38,19 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
   String status = "Connecting...";
   bool isPersonal = true;
 
-  int seconds = 0;
-  Timer? timer;
-
   @override
   void initState() {
     super.initState();
-
-    /// Call timer
-    timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() => seconds++);
-      }
-    });
 
     /// Listen for data from Native Service
     platform.setMethodCallHandler((call) async {
       if (call.method == "updateData") {
         final args = call.arguments;
         if (args is Map) {
-          String incomingStatus = args['status'] ?? status;
-
-          // Map raw status if needed, though Native should send clean strings
-
           if (mounted) {
             setState(() {
               number = args['number'] ?? number;
-              status = incomingStatus;
+              status = args['status'] ?? status;
               isPersonal = args['isPersonal'] ?? isPersonal;
               if (args['name'] != null) name = args['name'];
             });
@@ -73,159 +61,173 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
   }
 
   @override
-  void dispose() {
-    timer?.cancel();
-    super.dispose();
-  }
-
-  String time() {
-    final m = (seconds ~/ 60).toString().padLeft(2, '0');
-    final s = (seconds % 60).toString().padLeft(2, '0');
-    return "$m:$s";
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      child: Center(
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.15),
-                blurRadius: 10,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          padding: const EdgeInsets.all(16),
-          margin: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header Row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "TFC Nexus",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                      color: Colors.grey,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () async {
-                      await platform.invokeMethod('closeOverlay');
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.withOpacity(0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.close, size: 18),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // Call Info
-              Text(
-                number,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black87,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
                 ),
-              ),
-              if (name.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.indigo,
+              ],
+              border: Border.all(color: Colors.grey.shade200, width: 1),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header (Compact)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.hub_rounded,
+                        size: 12,
+                        color: Colors.grey.shade500,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        "TFC NEXUS",
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.0,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () async {
+                          await platform.invokeMethod('closeOverlay');
+                        },
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints(),
+                        padding: const EdgeInsets.all(4),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Main Content (Row Layout)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Avatar (Slightly smaller)
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: isPersonal
+                                ? [
+                                    const Color(0xFFF59E0B),
+                                    const Color(0xFFD97706),
+                                  ]
+                                : [
+                                    const Color(0xFF10B981),
+                                    const Color(0xFF059669),
+                                  ],
+                          ),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : "?",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+
+                      // Name/Number & Badges
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (name.isNotEmpty)
+                              Text(
+                                name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF1F2937),
+                                  height: 1.1,
+                                ),
+                              ),
+                            Text(
+                              number,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Badges Row
+                            Row(
+                              children: [
+                                _badge(
+                                  isPersonal ? "Personal" : "Customer",
+                                  isPersonal
+                                      ? const Color(0xFFF59E0B)
+                                      : const Color(0xFF10B981),
+                                ),
+                                const SizedBox(width: 6),
+                                _badge(
+                                  status.toUpperCase(),
+                                  const Color(0xFF6366F1),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
-
-              const SizedBox(height: 16),
-
-              // Badges
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _chip(
-                    isPersonal ? "Personal" : "Customer",
-                    isPersonal ? Colors.orange : Colors.green,
-                  ),
-                  _chip(status, Colors.blue),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // Live Timer
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.timer_outlined,
-                      size: 16,
-                      color: Colors.black54,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      time(),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                        color: Colors.black87,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _chip(String text, Color color) {
+  Widget _badge(String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Text(
-        text,
+        label,
         style: TextStyle(
           color: color,
-          fontWeight: FontWeight.bold,
-          fontSize: 11,
+          fontSize: 8,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );

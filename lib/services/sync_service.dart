@@ -10,11 +10,41 @@ import '../models/user_model.dart';
 import '../utils/phone_utils.dart';
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
+/// 🌉 THE BRIDGE MODEL: Immutable to prevent side-effect collisions
+@immutable
+class LiveCallResult {
+  final String? number;
+  final String? normalized;
+  final String? name;
+  final bool isPersonal;
+  final String? callType;
+  final bool isOnCall;
+
+  const LiveCallResult({
+    this.number,
+    this.normalized,
+    this.name,
+    this.isPersonal = true,
+    this.callType,
+    this.isOnCall = false,
+  });
+}
+
 class SyncService {
   final SupabaseClient client;
   final Function(int pending, int synced)? onProgress;
   final Map<String, Set<String>> _existingCallCache = {};
   DateTime? _lastCacheUpdate;
+
+  // 🌉 ISOLATED BRIDGE: Instance-based stream to prevent global collisions
+  final _liveUpdateController = StreamController<LiveCallResult>.broadcast();
+  Stream<LiveCallResult> get liveUpdates => _liveUpdateController.stream;
+
+  void dispose() {
+    _liveUpdateController.close();
+  }
 
   SyncService(this.client, {this.onProgress}) {
     LoggerService.info('🏗️ SyncService instance created');
@@ -106,6 +136,41 @@ class SyncService {
     }
   }
 
+  /// Fetches the last sync metadata for this device from Supabase
+  Future<Map<String, dynamic>?> getDeviceSync(String deviceId) async {
+    try {
+      final resp = await client
+          .from('device_sync')
+          .select()
+          .eq('device_id', deviceId)
+          .maybeSingle();
+      return resp;
+    } catch (e) {
+      LoggerService.error('❌ Failed to fetch device_sync', e);
+      return null;
+    }
+  }
+
+  /// Updates the last sync metadata for this device
+  Future<void> setDeviceSync({
+    required String deviceId,
+    required String lastSyncCall,
+    required DateTime callAt,
+  }) async {
+    try {
+      final payload = {
+        'device_id': deviceId,
+        'last_sync_at': DateTime.now().toUtc().toIso8601String(),
+        'last_sync_call': lastSyncCall,
+        'call_at': callAt.toUtc().toIso8601String(),
+      };
+      await client.from('device_sync').upsert(payload, onConflict: 'device_id');
+      LoggerService.info('✅ device_sync updated for $deviceId');
+    } catch (e) {
+      LoggerService.error('❌ Failed to update device_sync', e);
+    }
+  }
+
   Future<Map<String, dynamic>?> lookupCustomer(String? phoneNo) async {
     if (phoneNo == null || phoneNo.isEmpty) {
       LoggerService.warn('🔍 Sync: No number provided for customer lookup');
@@ -148,39 +213,82 @@ class SyncService {
     }
   }
 
-  Future<void> updateLiveCallStatus({
+  Future<Map<String, dynamic>?> updateLiveCallStatus({
     required bool isOnCall,
     String? number,
     String? callType,
   }) async {
     LoggerService.info(
-      '🔄 Sync: updateLiveCallStatus (active=$isOnCall, type=$callType)',
+      '🔄 Sync: updateLiveCallStatus (active=$isOnCall, type=$callType, no=$number)',
     );
-    String? custName;
-    bool? isPersonal;
 
-    if (isOnCall && number != null) {
-      LoggerService.ui('🔍 Classifying: $number');
-      final cust = await lookupCustomer(number);
-      final isCust = cust != null;
-      custName = cust?['customer_name'] as String?;
-      isPersonal = !isCust;
+    if (!isOnCall) {
+      await updateSyncMeta(onCall: false);
+      return null;
+    }
+
+    String? custName;
+    bool isPersonal = true;
+    Map<String, dynamic>? customerResult;
+    String? normalizedNo;
+
+    if (number != null) {
+      // 1. Normalize number (Remove spaces, dashes, and COUNTRY CODE)
+      // Logic: Take last 10 digits for Indian numbers, or normalize via PhoneUtils
+      String normalized = number.replaceAll(RegExp(r'[^0-9]'), '');
+      if (normalized.length > 10) {
+        normalized = normalized.substring(normalized.length - 10);
+      }
+      normalizedNo = normalized;
+
+      LoggerService.ui('🔍 Classifying (Normalized): $normalized');
+
+      // 2. Database Lookup
+      customerResult = await lookupCustomer(normalized);
+
+      if (customerResult != null) {
+        isPersonal = false;
+        custName = customerResult['customer_name'] as String?;
+      }
+
       LoggerService.ui(
-        '👤 Type: ${isPersonal ? "Personal" : "Customer (${custName ?? 'Unknown'})"}',
+        '👤 Result: ${isPersonal ? "Personal" : "Customer ($custName)"}',
+      );
+
+      // 3. Update Sync Meta with all details
+      await updateSyncMeta(
+        onCall: true,
+        dialedNo: normalized,
+        lastCallType: callType,
+        isPersonal: isPersonal,
+        customerName: custName,
+        isLogin: null,
       );
     }
 
-    await updateSyncMeta(
-      onCall: isOnCall,
-      dialedNo: isOnCall ? number : null,
-      lastCallType: callType,
+    // 🚀 MASTER MOVE: Create structured result
+    final result = LiveCallResult(
+      number: number,
+      normalized: normalizedNo,
+      name: custName,
       isPersonal: isPersonal,
-      customerName: custName,
-      isLogin: null,
+      callType: callType,
+      isOnCall: true,
     );
+
+    // 🌉 BRIDGE: Broadcast this result to anyone listening (LogService/Overlay)
+    _liveUpdateController.add(result);
+
+    return {
+      'number': number,
+      'normalized': normalizedNo,
+      'name': custName,
+      'isPersonal': isPersonal,
+      'status': callType, // 🚀 MATCH: Overlay expects 'status'
+    };
   }
 
-  /// Manually logs a call to call_history (used for live-only tracking)
+  /// Logs a call to call_history and updates device_sync bookmark in ONE operation
   Future<void> logManualCall({
     required String number,
     required String callType,
@@ -193,9 +301,11 @@ class SyncService {
       final cust = await lookupCustomer(number);
       final isCust = cust != null;
       final isPersonal = !isCust;
+      final name = cust != null ? cust['customer_name'] : null;
 
       final data = {
         'number': number,
+        'name': name,
         'call_type': callType,
         'duration': duration,
         'timestamp': ts.toUtc().toIso8601String(),
@@ -203,16 +313,28 @@ class SyncService {
         'is_personal': isPersonal,
       };
 
-      LoggerService.info('📜 Sync: Manually logging call: $callType ($number)');
+      LoggerService.info(
+        '📜 Sync: Saving call log to Supabase: $callType ($number)',
+      );
 
-      // Prevent duplicates by checking cache
+      // 1. Prevent duplicates check
       if (_isDuplicate(deviceId, data)) {
         LoggerService.info('📜 Sync: Skipping duplicate manual log');
         return;
       }
 
+      // 2. Insert into call_history
       await client.from('call_history').insert(data);
-      LoggerService.info('📜 Sync: Manual log successful');
+
+      // 3. 🚀 MASTER MOVE: Update device_sync bookmark right here
+      // CallLogService ab isse alag se handle nahi karegi.
+      await setDeviceSync(
+        deviceId: deviceId,
+        lastSyncCall: '${number}_${ts.millisecondsSinceEpoch}',
+        callAt: ts,
+      );
+
+      LoggerService.info('📜 Sync: History and Bookmark updated successfully');
 
       // Update cache
       if (_existingCallCache[deviceId] == null) {
@@ -226,7 +348,7 @@ class SyncService {
       ].join('_');
       _existingCallCache[deviceId]?.add(key);
     } catch (e) {
-      LoggerService.error('❌ Sync: Failed to manual log call', e);
+      LoggerService.error('❌ Sync: Failed to log call and bookmark', e);
     }
   }
 
