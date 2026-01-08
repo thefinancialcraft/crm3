@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../services/sync_service.dart';
+import '../services/logger_service.dart';
 import '../constants.dart';
 
 @pragma("vm:entry-point")
@@ -15,7 +16,7 @@ Future<void> overlayMain() async {
       anonKey: AppConstants.supabaseAnonKey,
     );
   } catch (e) {
-    print('[_from_overlay] ❌ Supabase init error: $e');
+    LoggerService.error('[_from_overlay] Supabase init error', e);
   }
   runApp(const CallOverlayApp());
 }
@@ -44,6 +45,8 @@ class CallOverlayScreen extends StatefulWidget {
 class _CallOverlayScreenState extends State<CallOverlayScreen> {
   static const platform = MethodChannel('com.example.crm3/overlay');
   final _syncSvc = SyncService.instance;
+  final GlobalKey _columnKey = GlobalKey();
+  double _lastHeight = 0;
 
   String number = "Unknown";
   String name = "";
@@ -56,7 +59,10 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _getInitialData());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _getInitialData();
+      _updateHeight();
+    });
 
     platform.setMethodCallHandler((call) async {
       if (call.method == "updateData" || call.method == "updateLookupResult") {
@@ -86,15 +92,18 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
               } else if (args['customer_details'] is String) {
                 try {
                   customerDetails = jsonDecode(args['customer_details']);
-                } catch (_) {}
+                } catch (e) {
+                  LoggerService.error('[_from_overlay] JSON decode error', e);
+                }
               }
             }
           });
           if (name.isEmpty &&
               number != "Unknown" &&
               number.isNotEmpty &&
-              !_isLookupInProgress)
+              !_isLookupInProgress) {
             _performLocalLookup();
+          }
         }
       }
       return null;
@@ -113,10 +122,11 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
             status = preData['status'] ?? status;
             isPersonal = preData['isPersonal'] ?? isPersonal;
             expiryDate = preData['expiry_date'];
-            if (preData['customer_details'] is Map)
+            if (preData['customer_details'] is Map) {
               customerDetails = Map<String, dynamic>.from(
                 preData['customer_details'],
               );
+            }
           } else if (nativeNo != null && nativeNo.isNotEmpty) {
             number = nativeNo;
             isPersonal = true;
@@ -127,27 +137,56 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
           _performLocalLookup();
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      LoggerService.error('[_from_overlay] Error getting initial data', e);
+    }
+  }
+
+  Future<void> _updateHeight() async {
+    if (!mounted) return;
+    final RenderBox? renderBox =
+        _columnKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox != null) {
+      final double newHeight = renderBox.size.height;
+      if (newHeight != _lastHeight && newHeight > 0) {
+        _lastHeight = newHeight;
+        try {
+          // Send density aware pixels to native
+          final pixelRatio = MediaQuery.of(context).devicePixelRatio;
+          await platform.invokeMethod('updateHeight', {
+            'height': (newHeight * pixelRatio).toInt(),
+          });
+        } catch (e) {
+          LoggerService.error('[_from_overlay] Height update error', e);
+        }
+      }
+    }
   }
 
   Future<void> _performLocalLookup({int attempt = 1}) async {
-    if (_isLookupInProgress && attempt == 1) return;
+    if (_isLookupInProgress && attempt == 1) {
+      return;
+    }
     _isLookupInProgress = true;
     try {
       String normalized = number.replaceAll(RegExp(r'[^0-9]'), '');
-      if (normalized.length > 10)
+      if (normalized.length > 10) {
         normalized = normalized.substring(normalized.length - 10);
+      }
       final result = await _syncSvc.lookupCustomer(normalized);
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       if (result != null) {
         setState(() {
           name = result['customer_name'] ?? "";
           isPersonal = false;
           expiryDate = result['expiry_date'];
-          if (result['customer_details'] is Map)
+          if (result['customer_details'] is Map) {
             customerDetails = Map<String, dynamic>.from(
               result['customer_details'],
             );
+          }
           _isLookupInProgress = false;
         });
       } else if (attempt < 3) {
@@ -166,7 +205,9 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
   }
 
   String _formatDate(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return "";
+    if (dateStr == null || dateStr.isEmpty) {
+      return "";
+    }
     try {
       return DateFormat('dd/MM/yy').format(DateTime.parse(dateStr));
     } catch (_) {
@@ -186,24 +227,16 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
         .map((e) => MapEntry(_cleanKey(e.key), e.value))
         .toList();
 
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        // Use a container with a background loosely to avoid full-screen trapping
-        // but the actual content is in the Column.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHeight());
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Material(
+        color: Colors.transparent,
         child: Column(
+          key: _columnKey,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 👆 DRAG HANDLE
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(top: 8),
-              decoration: BoxDecoration(
-                color: Colors.black12,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
             Container(
               margin: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -244,7 +277,7 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
                           ),
                           child: Center(
                             child: Text(
-                              name.isNotEmpty ? name[0].toUpperCase() : "?",
+                              name.isNotEmpty ? name[0].toUpperCase() : "#",
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 20,
@@ -302,11 +335,14 @@ class _CallOverlayScreenState extends State<CallOverlayScreen> {
                         ),
                         IconButton(
                           onPressed: () async {
-                            print('[_from_overlay] 🛑 Close clicked');
+                            LoggerService.info('[_from_overlay] Close clicked');
                             try {
                               await platform.invokeMethod('closeOverlay');
                             } catch (e) {
-                              print('[_from_overlay] ❌ Close error: $e');
+                              LoggerService.error(
+                                '[_from_overlay] Close error',
+                                e,
+                              );
                             }
                           },
                           icon: Container(

@@ -38,6 +38,7 @@ class CallService : Service() {
     private var isOverlayShown = false
     private var layoutParams: WindowManager.LayoutParams? = null
 
+    private var rootLayout: android.widget.FrameLayout? = null
     private lateinit var telephonyManager: TelephonyManager
     private var isListening = false
 
@@ -118,7 +119,11 @@ class CallService : Service() {
                         layoutParams?.let {
                             it.height = if (height > 0) height else WindowManager.LayoutParams.WRAP_CONTENT
                             if (isOverlayShown && rootLayout != null) {
+                                // Update Window
                                 windowManager?.updateViewLayout(rootLayout, it)
+                                // Update RootLayout internal params to force Flutter to re-layout
+                                rootLayout?.layoutParams?.height = it.height
+                                rootLayout?.requestLayout()
                             }
                         }
                         result.success(null)
@@ -159,9 +164,6 @@ class CallService : Service() {
         try { methodChannel?.invokeMethod("updateData", data) } catch (e: Exception) {}
     }
 
-    private var rootLayout: android.widget.FrameLayout? = null
-    private val DRAG_HANDLE_HEIGHT_DP = 60 
-
     private fun getStatusBarHeight(): Int {
         val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
         return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
@@ -180,10 +182,7 @@ class CallService : Service() {
         rootLayout?.addView(flutterView)
 
         val displayMetrics = resources.displayMetrics
-        val dragZoneHeight = (DRAG_HANDLE_HEIGHT_DP * displayMetrics.density).toInt()
 
-        // 🏗️ PRODUCTION FLAG: WRAP_CONTENT for both width and height is crucial.
-        // This ensures the "Window" is only as big as the "Card".
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -198,7 +197,6 @@ class CallService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = getStatusBarHeight() + 20 
-            // We set a minimum width so it doesn't look weird on first frame
             width = (displayMetrics.widthPixels * 0.95).toInt()
         }
 
@@ -217,10 +215,7 @@ class CallService : Service() {
                         initialTouchY = event.rawY
                         isMovementStarted = false
                         flutterView?.dispatchTouchEvent(event)
-                        
-                        // Decision: Should we intercept for dragging?
-                        // Return true only if touch is in drag zone
-                        return event.y <= dragZoneHeight
+                        return true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = abs(event.rawX - initialTouchX)
@@ -228,7 +223,6 @@ class CallService : Service() {
 
                         if (!isMovementStarted && (dx > touchSlop || dy > touchSlop)) {
                             isMovementStarted = true
-                            // Cancel outgoing tap in Flutter
                             val cancelEvent = MotionEvent.obtain(event)
                             cancelEvent.action = MotionEvent.ACTION_CANCEL
                             flutterView?.dispatchTouchEvent(cancelEvent)
