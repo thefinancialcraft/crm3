@@ -33,6 +33,12 @@ class LiveCallResult {
 }
 
 class SyncService {
+  static SyncService? _instance;
+  static SyncService get instance {
+    _instance ??= SyncService._internal(Supabase.instance.client);
+    return _instance!;
+  }
+
   final SupabaseClient client;
   final Function(int pending, int synced)? onProgress;
   final Map<String, Set<String>> _existingCallCache = {};
@@ -46,8 +52,13 @@ class SyncService {
     _liveUpdateController.close();
   }
 
-  SyncService(this.client, {this.onProgress}) {
-    LoggerService.info('🏗️ SyncService instance created');
+  SyncService._internal(this.client, {this.onProgress});
+
+  // Keep supporting the default constructor for backward compatibility if needed,
+  // but internally it should probably just point to instance or be deprecated.
+  factory SyncService(SupabaseClient client, {Function(int, int)? onProgress}) {
+    _instance ??= SyncService._internal(client, onProgress: onProgress);
+    return _instance!;
   }
 
   /// Update the sync_meta table in Supabase
@@ -184,7 +195,7 @@ class SyncService {
     try {
       final resp = await client
           .from('customers')
-          .select('id, phone_no, customer_name')
+          .select('id, phone_no, customer_name, expiry_date, customer_details')
           .ilike('phone_no', normalized)
           .limit(1)
           .maybeSingle();
@@ -285,6 +296,8 @@ class SyncService {
       'name': custName,
       'isPersonal': isPersonal,
       'status': callType, // 🚀 MATCH: Overlay expects 'status'
+      'expiry_date': customerResult?['expiry_date'],
+      'customer_details': customerResult?['customer_details'],
     };
   }
 

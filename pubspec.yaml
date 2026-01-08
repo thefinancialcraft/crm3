@@ -55,6 +55,7 @@ dependencies:
   path: ^1.9.1
   phone_state: ^3.0.1
   flutter_overlay_window: ^0.5.0
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:

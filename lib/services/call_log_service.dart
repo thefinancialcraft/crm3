@@ -5,7 +5,7 @@ import 'package:call_log/call_log.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:phone_state/phone_state.dart';
-import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+
 import '../models/call_log_model.dart';
 import 'storage_service.dart';
 import '../utils/device_utils.dart';
@@ -159,9 +159,7 @@ class CallLogService {
       // 1. Ask Native Kotlin Hub Directly (Most Reliable)
       try {
         finalNumber = await _nativeChannel.invokeMethod('getNativeNumber');
-        if (finalNumber != null) {
-          LoggerService.info('✅ Native recovered number: $finalNumber');
-        }
+        LoggerService.info('✅ Native recovered number: $finalNumber');
       } catch (e) {
         LoggerService.error('Native number fetch failed', e);
       }
@@ -297,21 +295,21 @@ class CallLogService {
         callType: _detectedCallType,
       );
 
-      // 🌉 CROSS-ISOLATE BRIDGE:
-      // Background isolate pushes the final result back to Native.
-      // We wrap this in a silent try-catch because in some cases (app closed),
-      // the Overlay Channel might not be ready yet.
+      // 🌉 COMMAND-DRIVEN OVERLAY:
+      // Background isolate finishes lookup and THEN tells native to show the overlay.
       if (onCall && result != null) {
         try {
+          // If it's a start of a call, use 'showOverlayWithData' to trigger display
+          // If it was already on, this will just update the data.
           await _nativeChannel.invokeMethod(
-            'updateLookupResult',
+            'showOverlayWithData',
             Map<String, dynamic>.from(result),
           );
-        } catch (e) {
-          // Log and continue - sync_meta is already updated in DB, so no data loss.
-          LoggerService.warn(
-            '⚠️ Overlay update channel skipping: Isolate sync mismatch',
+          LoggerService.info(
+            '🚀 Command sent: showOverlayWithData _from_background',
           );
+        } catch (e) {
+          LoggerService.error('❌ Failed to trigger overlay display', e);
         }
       }
     } catch (e) {
@@ -540,24 +538,15 @@ class CallLogService {
   }) async {
     if (kIsWeb) return;
     try {
-      if (!await FlutterOverlayWindow.isPermissionGranted()) return;
-      if (!await FlutterOverlayWindow.isActive()) {
-        await FlutterOverlayWindow.showOverlay(
-          height: 300,
-          width: WindowSize.matchParent,
-          alignment: OverlayAlignment.topCenter,
-          enableDrag: true,
-          overlayTitle: "TFC Nexus",
-        );
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-      await FlutterOverlayWindow.shareData({
+      // We use our custom native overlay instead of the     package
+      // to have better control over height and interaction.
+      await _nativeChannel.invokeMethod('showOverlayWithData', {
         'number': number,
         'name': name,
         'isPersonal': isPersonal ?? true,
         'status': status ?? "Active",
-        'action': 'update',
       });
+      LoggerService.info('🚀 Triggered custom native overlay');
     } catch (e) {
       LoggerService.error('Error showing overlay', e);
     }
@@ -565,8 +554,8 @@ class CallLogService {
 
   Future<void> _closeOverlay() async {
     try {
-      if (!kIsWeb && await FlutterOverlayWindow.isActive()) {
-        await FlutterOverlayWindow.closeOverlay();
+      if (!kIsWeb) {
+        await _nativeChannel.invokeMethod('closeOverlay');
       }
     } catch (e) {
       LoggerService.error('Error closing overlay', e);
