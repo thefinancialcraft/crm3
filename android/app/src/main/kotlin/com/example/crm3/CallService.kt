@@ -172,16 +172,72 @@ class CallService : Service() {
     private fun showOverlay() {
         if (isOverlayShown || flutterEngine == null) return
         
+        val displayMetrics = resources.displayMetrics
+        
         flutterView = FlutterView(this, FlutterTextureView(this))
         flutterView?.attachToFlutterEngine(flutterEngine!!)
 
-        rootLayout = android.widget.FrameLayout(this).apply {
+        rootLayout = object : android.widget.FrameLayout(this) {
+            private var initialX = 0; private var initialY = 0
+            private var initialTouchX = 0f; private var initialTouchY = 0f
+            private var isDragging = false
+            private val touchSlop = ViewConfiguration.get(this@CallService).scaledTouchSlop
+            private val screenWidth = displayMetrics.widthPixels
+
+            override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = this@CallService.layoutParams?.x ?: 0
+                        initialY = this@CallService.layoutParams?.y ?: 0
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        isDragging = false
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = abs(event.rawX - initialTouchX)
+                        val dy = abs(event.rawY - initialTouchY)
+                        if (dx > touchSlop || dy > touchSlop) {
+                            isDragging = true
+                            return true // Steal touch from Flutter button
+                        }
+                    }
+                }
+                return false
+            }
+
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
+                        
+                        this@CallService.layoutParams?.let {
+                            it.x = initialX + dx.toInt()
+                            it.y = initialY + dy.toInt()
+                            try {
+                                windowManager?.updateViewLayout(this, it)
+                            } catch (e: Exception) {}
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (isDragging) {
+                            val totalDx = abs(event.rawX - initialTouchX)
+                            if (totalDx > screenWidth * 0.45) {
+                                hideOverlay()
+                            }
+                        }
+                        isDragging = false
+                        return true
+                    }
+                }
+                return super.onTouchEvent(event)
+            }
+        }.apply {
             isClickable = false
             isFocusable = false
         }
         rootLayout?.addView(flutterView)
-
-        val displayMetrics = resources.displayMetrics
 
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -199,60 +255,6 @@ class CallService : Service() {
             y = getStatusBarHeight() + 20 
             width = (displayMetrics.widthPixels * 0.95).toInt()
         }
-
-        rootLayout?.setOnTouchListener(object : View.OnTouchListener {
-            private var initialX = 0; private var initialY = 0
-            private var initialTouchX = 0f; private var initialTouchY = 0f
-            private var isMovementStarted = false
-            private val touchSlop = ViewConfiguration.get(this@CallService).scaledTouchSlop
-
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = layoutParams?.x ?: 0
-                        initialY = layoutParams?.y ?: 0
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        isMovementStarted = false
-                        flutterView?.dispatchTouchEvent(event)
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = abs(event.rawX - initialTouchX)
-                        val dy = abs(event.rawY - initialTouchY)
-
-                        if (!isMovementStarted && (dx > touchSlop || dy > touchSlop)) {
-                            isMovementStarted = true
-                            val cancelEvent = MotionEvent.obtain(event)
-                            cancelEvent.action = MotionEvent.ACTION_CANCEL
-                            flutterView?.dispatchTouchEvent(cancelEvent)
-                            cancelEvent.recycle()
-                        }
-
-                        if (isMovementStarted) {
-                            layoutParams?.let {
-                                it.x = initialX + (event.rawX - initialTouchX).toInt()
-                                it.y = initialY + (event.rawY - initialTouchY).toInt()
-                                try {
-                                    windowManager?.updateViewLayout(rootLayout, it)
-                                } catch (e: Exception) {}
-                            }
-                            return true
-                        } else {
-                            flutterView?.dispatchTouchEvent(event)
-                        }
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (!isMovementStarted) {
-                            flutterView?.dispatchTouchEvent(event)
-                        }
-                        isMovementStarted = false
-                        return true
-                    }
-                }
-                return false
-            }
-        })
 
         try {
             windowManager?.addView(rootLayout, layoutParams)
