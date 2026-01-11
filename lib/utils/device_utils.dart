@@ -28,25 +28,31 @@ class DeviceUtils {
   }
 
   /// Returns a map of useful device info fields (id, osVersion, name, model)
-  static Future<Map<String, String>> getDeviceInfo() async {
-    final Map<String, String> out = {
+  static Future<Map<String, dynamic>> getDeviceInfo() async {
+    final Map<String, dynamic> out = {
       'deviceId': 'unknown',
       'osVersion': 'unknown',
-      'deviceName': 'unknown',
+      'device': 'unknown',
       'model': 'unknown',
       'brand': 'unknown',
       'sdkVersion': 'unknown',
       'androidId': 'unknown',
+      'manufacturer': 'unknown',
+      'board': 'unknown',
+      'hardware': 'unknown',
+      'product': 'unknown',
+      'isPhysicalDevice': true,
     };
 
     if (kIsWeb) {
       out['deviceId'] = 'web-unknown';
       out['osVersion'] = 'Web';
-      out['deviceName'] = 'Web Browser';
+      out['device'] = 'Web Browser';
       out['model'] = 'Web';
       out['brand'] = 'Web';
       out['sdkVersion'] = 'N/A';
       out['androidId'] = 'N/A';
+      out['isPhysicalDevice'] = false;
       LoggerService.info('DeviceUtils.getDeviceInfo -> web');
       return out;
     }
@@ -57,21 +63,26 @@ class DeviceUtils {
         final a = await info.androidInfo;
         out['deviceId'] = a.id;
         out['osVersion'] = a.version.release;
-        out['deviceName'] = a.device;
+        out['device'] = a.device;
         out['model'] = a.model;
         out['brand'] = a.brand;
         out['sdkVersion'] = a.version.sdkInt.toString();
-        out['androidId'] = a
-            .id; // androidInfo.id IS the android_id usually, or similar unique ID
+        out['androidId'] = a.id;
+        out['manufacturer'] = a.manufacturer;
+        out['board'] = a.board;
+        out['hardware'] = a.hardware;
+        out['product'] = a.product;
+        out['isPhysicalDevice'] = a.isPhysicalDevice;
       } else if (Platform.isIOS) {
         final i = await info.iosInfo;
         out['deviceId'] = i.identifierForVendor ?? out['deviceId']!;
         out['osVersion'] = '${i.systemName} ${i.systemVersion}';
-        out['deviceName'] = i.name;
+        out['device'] = i.name;
         out['model'] = i.utsname.machine;
         out['brand'] = 'Apple';
         out['sdkVersion'] = 'N/A';
         out['androidId'] = 'N/A';
+        out['isPhysicalDevice'] = i.isPhysicalDevice;
       }
     } catch (e) {
       LoggerService.warn('getDeviceInfo failed: $e');

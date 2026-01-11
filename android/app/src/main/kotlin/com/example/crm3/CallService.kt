@@ -240,7 +240,7 @@ class CallService : Service() {
         rootLayout?.addView(flutterView)
 
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -253,7 +253,7 @@ class CallService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = getStatusBarHeight() + 20 
-            width = (displayMetrics.widthPixels * 0.95).toInt()
+            width = displayMetrics.widthPixels
         }
 
         try {

@@ -6,6 +6,7 @@ import '../services/logger_service.dart';
 import '../services/sync_service.dart';
 import '../services/storage_service.dart';
 import '../services/call_log_service.dart';
+import '../services/webbridge_service.dart';
 
 class ManualControls extends StatefulWidget {
   const ManualControls({super.key});
@@ -18,6 +19,13 @@ class _ManualControlsState extends State<ManualControls> {
   bool _isSyncing = false;
   bool _isSendingFakeData = false;
   bool _isClearingBuckets = false;
+  final _testNumberController = TextEditingController(text: "9876543210");
+
+  @override
+  void dispose() {
+    _testNumberController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -197,6 +205,73 @@ class _ManualControlsState extends State<ManualControls> {
               }
             }
           },
+        ),
+        const SizedBox(height: 16),
+        const Divider(),
+        const SizedBox(height: 16),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Native Call Test',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _testNumberController,
+                decoration: const InputDecoration(
+                  labelText: 'Number',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+                style: const TextStyle(fontSize: 14),
+                onSubmitted: (val) {
+                  if (val.isNotEmpty) {
+                    CallLogService().placeDirectCall(val);
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: () {
+                final number = _testNumberController.text;
+                if (number.isNotEmpty) {
+                  CallLogService().placeDirectCall(number);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: const Size(0, 45),
+              ),
+              child: const Icon(Icons.call, size: 20),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: () {
+                WebBridgeService.notifyCallEnded(_testNumberController.text);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: const Size(0, 45),
+              ),
+              child: const Icon(Icons.call_end, size: 20),
+            ),
+          ],
         ),
       ],
     );

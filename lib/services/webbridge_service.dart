@@ -10,9 +10,11 @@ import 'sync_service.dart';
 import '../models/user_model.dart';
 import '../providers/sync_provider.dart';
 import '../pages/dev_mode_page.dart';
+import '../utils/device_utils.dart';
 
 class WebBridgeService {
   static InAppWebViewController? _controller;
+  static bool callAlive = false;
 
   /// Bridge connection status
   static bool get isConnected => _controller != null;
@@ -105,6 +107,38 @@ class WebBridgeService {
 
             case 'sync_user_info':
               await _handleSyncUserInfo(value);
+              break;
+
+            case 'request':
+              if (value == 'device_info') {
+                final deviceInfo = await DeviceUtils.getDeviceInfo();
+                _ack('device_info', deviceInfo);
+              }
+              break;
+            case 'call_disconnect':
+              if (value != null) {
+                LoggerService.info(
+                  "📞 WebBridge: Requesting call disconnect for $value",
+                );
+                callAlive = false;
+                await CallLogService().disconnectCall();
+                _ack('call_disconnect_ack', true);
+              } else {
+                _ack('call_disconnect_ack', false);
+              }
+              break;
+
+            case 'call_to':
+              if (value != null) {
+                LoggerService.info(
+                  "📞 WebBridge: Placing direct call to $value",
+                );
+                callAlive = true;
+                await CallLogService().placeDirectCall(value.toString());
+                _ack('call_to_ack', true);
+              } else {
+                _ack('call_to_ack', false);
+              }
               break;
 
             default:
@@ -203,6 +237,11 @@ class WebBridgeService {
 
     LoggerService.info("📤 [Flutter → Web] $type");
     _logOut("📤 $type → ${jsonEncode(value)}");
+  }
+
+  static void notifyCallEnded([String? number]) {
+    callAlive = false;
+    sendToWeb('call_disconected', number);
   }
 
   static void _ack(String type, dynamic value) {

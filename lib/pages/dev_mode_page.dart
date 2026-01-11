@@ -196,7 +196,7 @@ class _DevModePageState extends State<DevModePage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  FutureBuilder<Map<String, String>>(
+                  FutureBuilder<Map<String, dynamic>>(
                     future: DeviceUtils.getDeviceInfo(),
                     builder: (ctx, snap) {
                       final info = snap.data;
@@ -300,8 +300,6 @@ class _DevModePageState extends State<DevModePage> {
                         ElevatedButton.icon(
                           onPressed: () {
                             CallLogService().testOverlay();
-                            // Also modify LogViewer to show this if needed,
-                            // but LoggerService.info already does.
                           },
                           icon: const Icon(Icons.layers_outlined),
                           label: const Text('Test Call Overlay'),

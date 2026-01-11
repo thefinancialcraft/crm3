@@ -70,9 +70,11 @@ class SyncService {
     String? lastCallType,
     bool? isPersonal,
     String? customerName,
+    String? type,
+    String? value,
   }) async {
     LoggerService.info(
-      '🔄 updateSyncMeta called (isLogin: $isLogin, onCall: $onCall, hasError: ${lastError != null})',
+      '🔄 updateSyncMeta called (isLogin: $isLogin, onCall: $onCall, hasError: ${lastError != null}, type: $type, value: $value)',
     );
     try {
       // 1. Get user data immediately
@@ -120,12 +122,16 @@ class SyncService {
         if (isPersonal != null) payload['is_personal'] = isPersonal;
         if (lastCallType != null) payload['call_type'] = lastCallType;
         if (customerName != null) payload['customer_name'] = customerName;
+        if (type != null) payload['type'] = type;
+        if (value != null) payload['value'] = value;
       } else if (onCall == false) {
         // Reset fields when call ends
         payload['dialed_no'] = null;
         payload['is_personal'] = true;
         payload['call_type'] = null;
         payload['customer_name'] = null;
+        payload['type'] = null;
+        payload['value'] = null;
       }
 
       if (isLogin == true) {

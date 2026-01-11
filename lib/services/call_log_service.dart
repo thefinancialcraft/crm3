@@ -9,9 +9,11 @@ import 'package:phone_state/phone_state.dart';
 import '../models/call_log_model.dart';
 import 'storage_service.dart';
 import '../utils/device_utils.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'logger_service.dart';
 import 'sync_service.dart';
 import 'notification_service.dart';
+import 'webbridge_service.dart';
 
 /// Internal state machine for call tracking
 enum CallTrackingState { idle, dialing, ringing, active }
@@ -37,6 +39,27 @@ class CallLogService {
   static const _nativeChannel = MethodChannel('com.example.crm3/overlay');
 
   static bool get isOnCallRealTime => callActiveNotifier.value;
+  static String? get currentlyTrackedNumber => currentNumberNotifier.value;
+
+  /// Places a direct call using native ACTION_CALL
+  Future<void> placeDirectCall(String number) async {
+    try {
+      await _nativeChannel.invokeMethod('directCall', {'number': number});
+    } catch (e) {
+      LoggerService.error("❌ Failed to place direct call", e);
+    }
+  }
+
+  /// Ends the active call programmatically
+  Future<bool> disconnectCall() async {
+    try {
+      final bool ok = await _nativeChannel.invokeMethod('disconnectCall');
+      return ok;
+    } catch (e) {
+      LoggerService.error("❌ Failed to disconnect call", e);
+      return false;
+    }
+  }
 
   // Sync state flags
   static const String _firstSyncKey = 'is_first_sync';
@@ -85,6 +108,16 @@ class CallLogService {
 
     await NotificationService.initialize();
     await _checkLoginStatus();
+
+    // 🛡️ Request Permissions for Direct Call/Disconnect
+    try {
+      if (await Permission.phone.request().isGranted) {
+        LoggerService.info('✅ Phone permission granted');
+      }
+    } catch (e) {
+      LoggerService.error('❌ Permission request failed', e);
+    }
+
     _hardResetSession("Initialization");
 
     // 🌉 Start listening to the Bridge
@@ -265,6 +298,9 @@ class CallLogService {
       await _updateSyncMetaSafely(onCall: false);
       NotificationService.showCallEndedNotification();
       _schedulePostCallEnrichment();
+
+      // Notify WebApp that the call ended
+      WebBridgeService.notifyCallEnded(_currentNumber);
     } finally {
       callActiveNotifier.value = false;
       _hardResetSession("End Complete");
