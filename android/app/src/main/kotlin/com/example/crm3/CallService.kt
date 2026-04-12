@@ -79,12 +79,20 @@ class CallService : Service() {
         super.onCreate()
         instance = this
         createNotificationChannel()
+        // startForeground MUST be called within 5 seconds of the service being started.
+        // We call it immediately with a low-priority notification.
         startForeground(9999, createNotification())
+        
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+           // For Android 12+, we should ideally use TelephonyCallback, 
+           // but for now let's just ensure we don't block.
+        }
         telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
         isListening = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        initFlutterEngine()
+        
+        // Don't call initFlutterEngine() here. Let onStartCommand or handleCallState call it.
     }
 
     private fun initFlutterEngine() {
@@ -118,12 +126,16 @@ class CallService : Service() {
                         val height = call.argument<Int>("height") ?: WindowManager.LayoutParams.WRAP_CONTENT
                         layoutParams?.let {
                             it.height = if (height > 0) height else WindowManager.LayoutParams.WRAP_CONTENT
-                            if (isOverlayShown && rootLayout != null) {
-                                // Update Window
-                                windowManager?.updateViewLayout(rootLayout, it)
-                                // Update RootLayout internal params to force Flutter to re-layout
-                                rootLayout?.layoutParams?.height = it.height
-                                rootLayout?.requestLayout()
+                            if (isOverlayShown && rootLayout != null && rootLayout?.isAttachedToWindow == true) {
+                                try {
+                                    // Update Window
+                                    windowManager?.updateViewLayout(rootLayout, it)
+                                    // Update RootLayout internal params to force Flutter to re-layout
+                                    rootLayout?.layoutParams?.height = it.height
+                                    rootLayout?.requestLayout()
+                                } catch (e: Exception) {
+                                    Log.e("CallService", "Error updating height", e)
+                                }
                             }
                         }
                         result.success(null)
@@ -134,9 +146,11 @@ class CallService : Service() {
 
             val flutterLoader = FlutterInjector.instance().flutterLoader()
             flutterLoader.startInitialization(this)
-            flutterLoader.ensureInitializationComplete(this, null)
-            val entrypoint = DartExecutor.DartEntrypoint(flutterLoader.findAppBundlePath(), "overlayMain")
-            flutterEngine!!.dartExecutor.executeDartEntrypoint(entrypoint)
+            flutterLoader.ensureInitializationCompleteAsync(this, null, android.os.Handler(android.os.Looper.getMainLooper())) {
+                val entrypoint = DartExecutor.DartEntrypoint(flutterLoader.findAppBundlePath(), "overlayMain")
+                flutterEngine!!.dartExecutor.executeDartEntrypoint(entrypoint)
+                Log.d("CallService", "Flutter engine executed with entrypoint 'overlayMain'")
+            }
         }
     }
 
@@ -145,6 +159,7 @@ class CallService : Service() {
         val number = intent?.getStringExtra("number")
         val command = intent?.getStringExtra("command")
         if (command == "showOverlayWithData") showOverlay()
+        else if (command == "closeOverlay") hideOverlay()
         else if (state != null) handleCallState(state, number)
         return START_STICKY
     }
@@ -170,8 +185,20 @@ class CallService : Service() {
     }
 
     private fun showOverlay() {
-        if (isOverlayShown || flutterEngine == null) return
+        if (isOverlayShown) return
         
+        if (flutterEngine == null) {
+            initFlutterEngine()
+            // The actual addView will be handled after initialization if we want to be safe,
+            // but for now, let's just let it return and rely on the next update or a small delay.
+            // Actually, let's just initialize and then proceed if possible.
+        }
+        
+        if (flutterEngine == null) {
+            Log.e("CallService", "Cannot show overlay: Flutter engine is null")
+            return
+        }
+
         val displayMetrics = resources.displayMetrics
         
         flutterView = FlutterView(this, FlutterTextureView(this))

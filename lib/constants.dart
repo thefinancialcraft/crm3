@@ -1,5 +1,5 @@
 class AppConstants {
-  static const defaultCrmUrl = 'https://tfc-connectv2.vercel.app/';
+  static const defaultCrmUrl = 'https://www.rynxly.in/login';
 
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',

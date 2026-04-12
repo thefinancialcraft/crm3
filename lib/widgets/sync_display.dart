@@ -16,118 +16,49 @@ class SyncDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const primaryColor = Color(0xFF5E17EB);
+
     return Container(
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF5E17EB), Color(0xFF8A2BE2)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF5E17EB).withValues(alpha: 0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
-          ),
-        ],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10, offset: const Offset(0, 4))],
       ),
-      padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Sync Status',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Status Tabs
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildStatusTab(
-                'Pending',
-                pending.toString(),
-                Colors.orange,
-                true,
-              ),
-              const SizedBox(width: 12),
-              _buildStatusTab('Synced', synced.toString(), Colors.green, true),
-              const SizedBox(width: 12),
-              _buildStatusTab(
-                'Status',
-                isSyncing ? 'Syncing' : 'Idle',
-                isSyncing ? const Color(0xFF5E17EB) : Colors.grey,
-                true,
+              const Text('Synchronization', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: (isSyncing ? primaryColor : Colors.grey).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+                child: Text(isSyncing ? 'ACTIVE' : 'IDLE', style: TextStyle(color: isSyncing ? primaryColor : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
-
           const SizedBox(height: 20),
-
-          // Last Sync Info
+          Row(
+            children: [
+              _buildLargeStat('Pending', pending.toString(), Colors.orange, Icons.timer_outlined),
+              const SizedBox(width: 12),
+              _buildLargeStat('Synced', synced.toString(), Colors.green, Icons.cloud_done_outlined),
+            ],
+          ),
+          const SizedBox(height: 16),
           Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.1),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            padding: const EdgeInsets.all(16),
-            child: Column(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(color: Colors.grey.withValues(alpha: 0.03), borderRadius: BorderRadius.circular(16)),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF5E17EB),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.access_time,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Last Sync',
-                            style: TextStyle(
-                              color: Color(0xFF5E17EB),
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            lastSync != null
-                                ? '${lastSync!.year}-${lastSync!.month.toString().padLeft(2, '0')}-${lastSync!.day.toString().padLeft(2, '0')} ${lastSync!.hour.toString().padLeft(2, '0')}:${lastSync!.minute.toString().padLeft(2, '0')}:${lastSync!.second.toString().padLeft(2, '0')}'
-                                : '-',
-                            style: const TextStyle(
-                              color: Colors.black87,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                const Icon(Icons.history_rounded, size: 16, color: Colors.grey),
+                const SizedBox(width: 10),
+                const Text('Last Synced', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
+                const Spacer(),
+                Text(lastSync != null ? _formatTime(lastSync!) : 'Never', style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -136,78 +67,25 @@ class SyncDisplay extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusTab(
-    String label,
-    String value,
-    Color color,
-    bool showIcon,
-  ) {
+  Widget _buildLargeStat(String label, String value, Color color, IconData icon) {
     return Expanded(
       child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
         padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withValues(alpha: 0.1))),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (showIcon) ...[
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  label == 'Pending' ? Icons.pending : Icons.check_circle,
-                  color: color,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(height: 8),
-            ] else ...[
-              // Add placeholder for consistent height when no icon is shown
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  isSyncing ? Icons.sync : Icons.pause,
-                  color: color,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: const TextStyle(
-                color: Colors.black87,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            Icon(icon, color: color, size: 18),
+            const SizedBox(height: 8),
+            Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
+            Text(label, style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8), fontWeight: FontWeight.w600)),
           ],
         ),
       ),
     );
+  }
+
+  String _formatTime(DateTime t) {
+    return '${t.hour}:${t.minute.toString().padLeft(2, '0')} • ${t.day}/${t.month}';
   }
 }

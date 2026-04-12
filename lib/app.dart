@@ -5,6 +5,7 @@ import 'utils/device_utils.dart';
 import 'services/notification_service.dart';
 import 'services/call_log_service.dart';
 import 'pages/inapp_webview_page.dart';
+import 'widgets/connection_wrapper.dart';
 
 class App extends StatefulWidget {
   const App({super.key});
@@ -36,8 +37,10 @@ class _AppState extends State<App> {
       _ensureDeviceId(context);
     });
 
-    // Show only the InAppWebViewPage as the main page
-    return const Scaffold(body: SafeArea(child: InAppWebViewPage()));
+    // Show InAppWebViewPage wrapped with ConnectionWrapper to handle offline state
+    return Scaffold(
+      body: SafeArea(child: ConnectionWrapper(child: const InAppWebViewPage())),
+    );
   }
 
   void _ensureDeviceId(BuildContext context) {

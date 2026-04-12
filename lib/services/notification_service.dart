@@ -24,11 +24,27 @@ class NotificationService {
     );
 
     // Initialize plugin with settings
-    await plugin.initialize(
-      const InitializationSettings(
-        android: AndroidInitializationSettings('ic_bg_service_small'),
-      ),
-    );
+    try {
+      await plugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('ic_launcher'),
+        ),
+      );
+      LoggerService.info('NotificationService plugin initialized');
+    } catch (e) {
+      LoggerService.error('❌ Notification initialization failed', e);
+      // Try again with a system default icon if ic_launcher fails
+      try {
+        await plugin.initialize(
+          const InitializationSettings(
+            android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+          ),
+        );
+        LoggerService.info('NotificationService initialized with @mipmap fallback');
+      } catch (e2) {
+        LoggerService.error('❌ Notification initialization failed even with fallback', e2);
+      }
+    }
 
     // Create the notification channel
     await plugin
@@ -53,7 +69,7 @@ class NotificationService {
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           ongoing: true,
           priority: Priority.high,
           showWhen: true,
@@ -78,7 +94,7 @@ class NotificationService {
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           priority: Priority.max,
           importance: Importance.max,
           showWhen: true,
@@ -99,7 +115,7 @@ class NotificationService {
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           ongoing: true,
           priority: Priority.high,
           showWhen: true,
@@ -120,7 +136,7 @@ class NotificationService {
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           ongoing: true,
           priority: Priority.high,
           showWhen: true,
@@ -141,7 +157,7 @@ class NotificationService {
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           priority: Priority.low,
           showWhen: true,
           autoCancel: true,
@@ -163,7 +179,7 @@ class NotificationService {
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           priority: Priority.high,
           showWhen: true,
           autoCancel: true,

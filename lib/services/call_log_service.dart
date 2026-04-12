@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:phone_state/phone_state.dart';
 
 import '../models/call_log_model.dart';
+import '../models/user_model.dart';
 import 'storage_service.dart';
 import '../utils/device_utils.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -14,6 +15,7 @@ import 'logger_service.dart';
 import 'sync_service.dart';
 import 'notification_service.dart';
 import 'webbridge_service.dart';
+import '../utils/phone_utils.dart';
 
 /// Internal state machine for call tracking
 enum CallTrackingState { idle, dialing, ringing, active }
@@ -43,10 +45,29 @@ class CallLogService {
 
   /// Places a direct call using native ACTION_CALL
   Future<void> placeDirectCall(String number) async {
+    LoggerService.info("📞 CallLogService: placeDirectCall -> $number");
+    _currentNumber = number;
+    currentNumberNotifier.value = number;
+    WebBridgeService.notifyCallStatus("connecting", number);
+    final simId = StorageService.getDefaultSim();
     try {
-      await _nativeChannel.invokeMethod('directCall', {'number': number});
+      await _nativeChannel.invokeMethod('directCall', {
+        'number': number,
+        'simId': simId,
+      });
     } catch (e) {
       LoggerService.error("❌ Failed to place direct call", e);
+    }
+  }
+
+  /// Sets the current number manually (e.g. from Web Bridge)
+  void setCurrentNumber(String? number) {
+    if (number != null && number.isNotEmpty) {
+      LoggerService.info(
+        "📞 CallLogService: Manually setting current number to $number",
+      );
+      _currentNumber = number;
+      currentNumberNotifier.value = number;
     }
   }
 
@@ -65,19 +86,6 @@ class CallLogService {
   static const String _firstSyncKey = 'is_first_sync';
   static const String _lastSyncTimeKey = 'last_sync_time';
 
-  // --- INTERNAL HELPERS ---
-  Future<String?> _getLatestCallLogNumber() async {
-    try {
-      final Iterable<CallLogEntry> entries = await CallLog.get();
-      if (entries.isNotEmpty) {
-        return entries.first.number;
-      }
-    } catch (e) {
-      LoggerService.error('Error fetching latest call log', e);
-    }
-    return null;
-  }
-
   // --- INTERNAL STATE ---
   CallTrackingState _state = CallTrackingState.idle;
   String? _currentNumber;
@@ -90,7 +98,7 @@ class CallLogService {
   bool? _lastSyncedOnCall;
 
   // 🌉 THE BRIDGE: Shared instance and stream subscription
-  late final SyncService _syncSvc;
+  SyncService get _syncSvc => SyncService.instance;
   StreamSubscription<LiveCallResult>? _bridgeSubscription;
 
   // --- DEPENDENCIES & SUBSCRIPTIONS ---
@@ -104,7 +112,7 @@ class CallLogService {
     LoggerService.info('🚀 CallLogService: Initializing...');
 
     // Initialize the Bridge
-    _syncSvc = SyncService(Supabase.instance.client);
+    // SyncService.instance handles its own initialization logic.
 
     await NotificationService.initialize();
     await _checkLoginStatus();
@@ -114,6 +122,8 @@ class CallLogService {
       if (await Permission.phone.request().isGranted) {
         LoggerService.info('✅ Phone permission granted');
       }
+      // Note: On some versions of permission_handler, callLog is used.
+      // If it fails to compile, we rely on the broader phone permission.
     } catch (e) {
       LoggerService.error('❌ Permission request failed', e);
     }
@@ -130,6 +140,7 @@ class CallLogService {
     _bridgeSubscription?.cancel();
     _bridgeSubscription = _syncSvc.liveUpdates.listen((data) {
       if (data.isOnCall) {
+        _currentNumber = data.number;
         currentNumberNotifier.value = data.number;
         customerNameNotifier.value = data.name;
         isPersonalNotifier.value = data.isPersonal;
@@ -172,8 +183,11 @@ class CallLogService {
   void _startLiveSubscription() {
     _liveCallSubscription?.cancel();
     _liveCallSubscription = PhoneState.stream.listen(
-      (event) => _handleCallEvent(event.status, event.number),
-      onError: (e) => LoggerService.error('❌ Stream Error', e),
+      (event) {
+        LoggerService.info('📡 Raw PhoneState Event: ${event.status} | Number: ${event.number}');
+        _handleCallEvent(event.status, event.number);
+      },
+      onError: (e) => LoggerService.error('❌ PhoneState Stream Error', e),
     );
   }
 
@@ -189,29 +203,37 @@ class CallLogService {
     if (finalNumber == null ||
         finalNumber == "Unknown" ||
         finalNumber.isEmpty) {
-      // 1. Ask Native Kotlin Hub Directly (Most Reliable)
-      try {
-        finalNumber = await _nativeChannel.invokeMethod('getNativeNumber');
-        LoggerService.info('✅ Native recovered number: $finalNumber');
-      } catch (e) {
-        LoggerService.error('Native number fetch failed', e);
-      }
-
-      // 2. Try SharedPrefs (Secondary Fallback)
-      if (finalNumber == null ||
-          finalNumber == "Unknown" ||
-          finalNumber.isEmpty) {
+      // 0. Use currently tracked number if available (Best for Disconnects)
+      if (_currentNumber != null &&
+          _currentNumber!.isNotEmpty &&
+          _currentNumber != "Unknown") {
+        finalNumber = _currentNumber;
+        LoggerService.info('✅ Using in-memory session number: $finalNumber');
+      } else {
+        // 1. Ask Native Kotlin Hub Directly (Most Reliable)
         try {
-          final prefs = await SharedPreferences.getInstance();
-          finalNumber = prefs.getString('current_call_number');
-        } catch (_) {}
-      }
+          finalNumber = await _nativeChannel.invokeMethod('getNativeNumber');
+          if (finalNumber != null && finalNumber != "Unknown") {
+            LoggerService.info('✅ Native recovered number: $finalNumber');
+          }
+        } catch (e) {
+          LoggerService.error('Native number fetch failed', e);
+        }
 
-      // 3. Try System Call Log (Final Attempt)
-      if (finalNumber == null ||
-          finalNumber == "Unknown" ||
-          finalNumber.isEmpty) {
-        finalNumber = await _getLatestCallLogNumber();
+        // 2. Try SharedPrefs (Secondary Fallback)
+        if (finalNumber == null ||
+            finalNumber == "Unknown" ||
+            finalNumber.isEmpty) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            finalNumber = prefs.getString('current_call_number');
+            if (finalNumber != null) {
+              LoggerService.info(
+                '✅ SharedPrefs recovered number: $finalNumber',
+              );
+            }
+          } catch (_) {}
+        }
       }
     }
 
@@ -235,9 +257,11 @@ class CallLogService {
         }
         break;
       case PhoneStateStatus.CALL_ENDED:
+        LoggerService.info('📞 Call Ended detected for: $finalNumber');
         await _handleCallEnd(finalNumber);
         break;
       default:
+        LoggerService.info('📞 Untracked Phone State: $status');
         break;
     }
   }
@@ -250,7 +274,9 @@ class CallLogService {
 
     // 🚀 INCOMING: Start sync/lookup now for Caller ID during Ringing
     if (_currentNumber != null) {
+      LoggerService.info('📞 Notifying WebBridge: INCOMING -> $_currentNumber');
       await _updateSyncMetaSafely(onCall: true, number: _currentNumber);
+      WebBridgeService.notifyCallStatus("connecting", _currentNumber);
     }
 
     NotificationService.showCallNotification("📞 Incoming: $_currentNumber");
@@ -260,6 +286,8 @@ class CallLogService {
     if (_currentNumber == null && rawNumber != null) {
       _currentNumber = rawNumber;
     }
+
+    final bool wasRinging = _state == CallTrackingState.ringing;
     _state = CallTrackingState.active;
     callActiveNotifier.value = true;
 
@@ -272,6 +300,13 @@ class CallLogService {
     // - Incoming: Already synced in _handleCallStart, _updateSyncMetaSafely will skip.
     // - Outgoing: First time hit, will sync now as dialing starts.
     await _updateSyncMetaSafely(onCall: true, number: _currentNumber);
+
+    // Notify WebBridge
+    if (wasRinging) {
+      WebBridgeService.notifyCallStatus("connected", _currentNumber);
+    } else {
+      WebBridgeService.notifyCallStatus("connecting", _currentNumber);
+    }
   }
 
   Future<void> _handleCallEnd(String? rawNumber) async {
@@ -282,16 +317,44 @@ class CallLogService {
         _currentNumber = rawNumber;
       }
       if (_currentNumber != null && _isUserLoggedIn) {
-        final duration = _callStartTime != null
-            ? DateTime.now().difference(_callStartTime!).inSeconds
-            : 0;
+        // 1. Wait briefly for system call log to update
+        await Future.delayed(const Duration(seconds: 2));
+
+        // 2. Fetch actual talktime from system logs
+        int actualDuration = 0;
+        try {
+          final Iterable<CallLogEntry> entries = await CallLog.query(
+            number: _currentNumber,
+          );
+          if (entries.isNotEmpty) {
+            // Take the most recent entry for this number
+            actualDuration = entries.first.duration ?? 0;
+            LoggerService.info(
+              '✅ Actual Talktime from System Log: $actualDuration seconds',
+            );
+          } else {
+            // Fallback to time-based calculation if log is missing
+            actualDuration = _callStartTime != null
+                ? DateTime.now().difference(_callStartTime!).inSeconds
+                : 0;
+            LoggerService.warn(
+              '⚠️ Call log not found. Falling back to estimated duration: $actualDuration',
+            );
+          }
+        } catch (e) {
+          LoggerService.error('❌ Failed to query system call log', e);
+          actualDuration = _callStartTime != null
+              ? DateTime.now().difference(_callStartTime!).inSeconds
+              : 0;
+        }
+
         final now = DateTime.now();
 
-        // 🚀 BRIDGE CALL: Messenger sends the signal
+        // 🚀 BRIDGE CALL: Messenger sends the signal with actual duration
         await _syncSvc.logManualCall(
           number: _currentNumber!,
           callType: _detectedCallType ?? 'unknown',
-          duration: duration,
+          duration: actualDuration,
           timestamp: now,
         );
       }
@@ -300,6 +363,9 @@ class CallLogService {
       _schedulePostCallEnrichment();
 
       // Notify WebApp that the call ended
+      LoggerService.info(
+        "📞 CallLogService: Notifying WebBridge of ended call: $_currentNumber",
+      );
       WebBridgeService.notifyCallEnded(_currentNumber);
     } finally {
       callActiveNotifier.value = false;
@@ -406,6 +472,10 @@ class CallLogService {
     if (kIsWeb) return 0;
     try {
       final currentDeviceId = await DeviceUtils.getDeviceId();
+      final userMap = StorageService.getUser();
+      final empId = userMap != null
+          ? UserModel.fromJson(userMap).employeeId
+          : null;
 
       // 1. Check Supabase for last sync info to avoid redundant scanning
       DateTime? cutoff;
@@ -429,7 +499,8 @@ class CallLogService {
       final entries = await CallLog.get();
       final filtered = entries.where((e) {
         final ts = DateTime.fromMillisecondsSinceEpoch(e.timestamp ?? 0);
-        final id = '${e.number}_${ts.millisecondsSinceEpoch}';
+        final normalizedNum = PhoneUtils.normalize(e.number);
+        final id = '${normalizedNum}_${ts.millisecondsSinceEpoch}';
 
         // Skip if call is strictly older than cutoff
         if (ts.isBefore(cutoff!)) return false;
@@ -454,18 +525,20 @@ class CallLogService {
 
       for (final e in filtered) {
         final ts = DateTime.fromMillisecondsSinceEpoch(e.timestamp ?? 0);
-        final id = '${e.number}_${ts.millisecondsSinceEpoch}';
+        final normalizedNum = PhoneUtils.normalize(e.number);
+        final id = '${normalizedNum}_${ts.millisecondsSinceEpoch}';
 
         if (StorageService.syncedBucket.get(id) == null &&
             StorageService.callBucket.get(id) == null) {
           final model = CallLogModel(
             id: id,
-            number: e.number ?? '',
+            number: PhoneUtils.normalize(e.number),
             name: e.name,
             callType: _mapType(e.callType),
             duration: e.duration ?? 0,
             timestamp: ts.toUtc(),
             deviceId: currentDeviceId,
+            employeeId: empId,
           );
 
           StorageService.callBucket.put(id, {
@@ -493,9 +566,10 @@ class CallLogService {
       }
 
       await updateLastSync(DateTime.now().millisecondsSinceEpoch.toString());
+      LoggerService.info('✅ Scan complete: $added new calls enqueued for sync');
       return added;
     } catch (e) {
-      LoggerService.error('❌ Scan failed', e);
+      LoggerService.error('❌ Scan failed during system log iteration', e);
       return 0;
     }
   }
@@ -543,6 +617,7 @@ class CallLogService {
         duration: 45,
         timestamp: ts.toUtc(),
         deviceId: currentDeviceId,
+        employeeId: 'fake_emp',
       );
 
       await StorageService.callBucket.put(id, {

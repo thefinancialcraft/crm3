@@ -25,6 +25,10 @@ class BackgroundService {
     }
 
     final service = FlutterBackgroundService();
+    if (await service.isRunning()) {
+      LoggerService.info('BackgroundService is already running');
+      return;
+    }
 
     // Set up notification channel for Android
     const AndroidNotificationChannel channel = AndroidNotificationChannel(
@@ -40,7 +44,7 @@ class BackgroundService {
     // Initialize notifications plugin with proper settings
     await flutterLocalNotificationsPlugin.initialize(
       const InitializationSettings(
-        android: AndroidInitializationSettings('ic_bg_service_small'),
+        android: AndroidInitializationSettings('ic_launcher'),
       ),
     );
 
@@ -116,7 +120,7 @@ class BackgroundService {
           FlutterLocalNotificationsPlugin();
       await notifications.initialize(
         const InitializationSettings(
-          android: AndroidInitializationSettings('ic_bg_service_small'),
+          android: AndroidInitializationSettings('ic_launcher'),
         ),
       );
 
@@ -312,7 +316,7 @@ class BackgroundService {
         android: AndroidNotificationDetails(
           'call_log_sync_channel',
           'Call Log Service',
-          icon: 'ic_bg_service_small',
+          icon: 'ic_launcher',
           ongoing: true,
           priority: Priority.high,
         ),

@@ -13,21 +13,21 @@ class LoggerService {
     _logger.i(message);
     // Mirror to LogManager as a UI event
     lm.log.logUI(message, level: lm.LogLevel.info);
-    _forward(LogCategory.ui, message);
+    _forward(lm.LogCategory.ui, message);
   }
 
   static void info(String message) {
     _logger.i(message);
     // Mirror to LogManager as a function info
     lm.log.info('LoggerService', message, isFunction: true);
-    _forward(LogCategory.function, message);
+    _forward(lm.LogCategory.function, message);
   }
 
   static void warn(String message) {
     _logger.w(message);
     // Mirror to LogManager as a function warning
     lm.log.warning('LoggerService', message, isFunction: true);
-    _forward(LogCategory.function, message);
+    _forward(lm.LogCategory.function, message);
   }
 
   static void error(String message, [Object? error, StackTrace? st]) {
@@ -35,10 +35,10 @@ class LoggerService {
     // Mirror to LogManager as a function error
     final full = '$message${error != null ? ' | $error' : ''}';
     lm.log.error('LoggerService', full, isFunction: true);
-    _forward(LogCategory.function, full);
+    _forward(lm.LogCategory.function, full);
   }
 
-  static void _forward(LogCategory category, String message) {
+  static void _forward(lm.LogCategory category, String message) {
     final ctx = navKey.currentContext;
     if (ctx != null) {
       try {

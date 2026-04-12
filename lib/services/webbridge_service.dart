@@ -117,12 +117,29 @@ class WebBridgeService {
               break;
             case 'call_disconnect':
               if (value != null) {
+                final callSvc = CallLogService();
+                final currentNo = CallLogService.currentlyTrackedNumber;
+                final isOnCall = CallLogService.isOnCallRealTime;
+                final requestNo = value.toString();
+
                 LoggerService.info(
-                  "📞 WebBridge: Requesting call disconnect for $value",
+                  "📞 WebBridge: Disconnect request for $requestNo. Active: $isOnCall, CurrentNum: $currentNo",
                 );
-                callAlive = false;
-                await CallLogService().disconnectCall();
-                _ack('call_disconnect_ack', true);
+
+                if (isOnCall && currentNo == requestNo) {
+                  LoggerService.info(
+                    "📞 WebBridge: Match found. Disconnecting...",
+                  );
+                  callAlive = false;
+                  await callSvc.disconnectCall();
+                  _ack('call_disconnect_ack', true);
+                } else {
+                  LoggerService.info(
+                    "📞 WebBridge: No matching call. Cleaning up sync_meta.",
+                  );
+                  await SyncService.instance.updateSyncMeta(onCall: false);
+                  _ack('call_disconnect_ack', false);
+                }
               } else {
                 _ack('call_disconnect_ack', false);
               }
@@ -134,7 +151,9 @@ class WebBridgeService {
                   "📞 WebBridge: Placing direct call to $value",
                 );
                 callAlive = true;
-                await CallLogService().placeDirectCall(value.toString());
+                final callSvc = CallLogService();
+                callSvc.setCurrentNumber(value.toString());
+                await callSvc.placeDirectCall(value.toString());
                 _ack('call_to_ack', true);
               } else {
                 _ack('call_to_ack', false);
@@ -239,7 +258,16 @@ class WebBridgeService {
     _logOut("📤 $type → ${jsonEncode(value)}");
   }
 
+  static void notifyCallStatus(String status, String? number) {
+    if (number == null || number.isEmpty || number == "Unknown") return;
+    LoggerService.info("📤 notifyCallStatus: type='$status', value='$number'");
+    sendToWeb(status, number);
+  }
+
   static void notifyCallEnded([String? number]) {
+    LoggerService.info(
+      "📤 notifyCallEnded: Sending call_disconected with value: $number",
+    );
     callAlive = false;
     sendToWeb('call_disconected', number);
   }

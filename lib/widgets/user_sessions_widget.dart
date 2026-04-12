@@ -7,262 +7,92 @@ class UserSessionsWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Real past user data from provider
     final pastUsers = context.watch<SyncProvider>().pastSessions;
+    const primaryColor = Color(0xFF5E17EB);
 
-    if (pastUsers.isEmpty) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withValues(alpha: 0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Past User Sessions',
-              style: TextStyle(
-                color: Color(0xFF5E17EB),
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Text(
-                  'No past sessions recorded locally.',
-                  style: TextStyle(color: Colors.grey[500]),
-                ),
-              ),
-            ),
+            const Text('Login History', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+            Text('${pastUsers.length} sessions', style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
           ],
         ),
-      );
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Past User Sessions',
-            style: TextStyle(
-              color: Color(0xFF5E17EB),
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Horizontal ScrollView for the table
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withValues(alpha: 0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+        const SizedBox(height: 12),
+        if (pastUsers.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.grey.withValues(alpha: 0.1))),
+            child: const Center(child: Text('No past sessions recorded.', style: TextStyle(color: Colors.grey, fontSize: 13))),
+          )
+        else
+          SizedBox(
+            height: 140,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: pastUsers.length,
+              itemBuilder: (context, index) {
+                final user = pastUsers[index];
+                return Container(
+                  width: 240,
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: primaryColor.withValues(alpha: 0.1)),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.01), blurRadius: 10, offset: const Offset(0, 4))],
                   ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  // Table Header with modern styling
-                  Container(
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF5E17EB),
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(16),
-                        topRight: Radius.circular(16),
-                      ),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    child: const Row(
-                      children: [
-                        SizedBox(
-                          width: 80,
-                          child: Text(
-                            'User ID',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 120,
-                          child: Text(
-                            'User',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 150,
-                          child: Text(
-                            'First Login',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 150,
-                          child: Text(
-                            'Last Login',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 150,
-                          child: Text(
-                            'Last Logout',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Table Rows with modern styling
-                  ...List.generate(pastUsers.length, (index) {
-                    final user = pastUsers[index];
-                    final isLast = index == pastUsers.length - 1;
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: isLast
-                            ? null
-                            : Border(
-                                bottom: BorderSide(
-                                  color: Colors.grey.shade200,
-                                  width: 0.5,
-                                ),
-                              ),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          SizedBox(
-                            width: 80,
-                            child: Text(
-                              user['id']?.toString() ?? '-',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(color: primaryColor.withValues(alpha: 0.1), shape: BoxShape.circle),
+                            child: const Icon(Icons.history_rounded, color: primaryColor, size: 14),
                           ),
-                          SizedBox(
-                            width: 120,
-                            child: Text(
-                              user['name']?.toString() ?? '-',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 150,
-                            child: Text(
-                              _formatDateTime(user['firstLogin']),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 150,
-                            child: Text(
-                              _formatDateTime(user['lastLogin']),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 150,
-                            child: Text(
-                              _formatDateTime(user['lastLogout']),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(user['name']?.toString() ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), overflow: TextOverflow.ellipsis)),
                         ],
                       ),
-                    );
-                  }),
-                ],
-              ),
+                      const SizedBox(height: 12),
+                      _buildSessionTime('IN', user['firstLogin']),
+                      const SizedBox(height: 6),
+                      _buildSessionTime('OUT', user['lastLogout'], isLogout: true),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 
-  String _formatDateTime(dynamic date) {
-    if (date == null) return '-';
-    if (date is DateTime) {
-      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  Widget _buildSessionTime(String label, dynamic date, {bool isLogout = false}) {
+    final time = _formatDateTimeShort(date);
+    return Row(
+      children: [
+        Container(width: 30, padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: (isLogout ? Colors.orange : Colors.green).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)), child: Center(child: Text(label, style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: isLogout ? Colors.orange : Colors.green)))),
+        const SizedBox(width: 8),
+        Text(time, style: const TextStyle(fontSize: 12, color: Colors.blueGrey, fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+
+  String _formatDateTimeShort(dynamic date) {
+    if (date == null) return 'N/A';
+    try {
+      final parsed = date is DateTime ? date : DateTime.tryParse(date.toString());
+      if (parsed == null) return date.toString();
+      return '${parsed.day}/${parsed.month} ${parsed.hour}:${parsed.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return '-';
     }
-    if (date is String) {
-      final parsed = DateTime.tryParse(date);
-      if (parsed != null) {
-        return '${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')} ${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}';
-      }
-      return date;
-    }
-    return '-';
   }
 }

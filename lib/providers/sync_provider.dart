@@ -1,39 +1,38 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import '../services/storage_service.dart';
 import '../models/user_model.dart';
 import '../services/logger_service.dart';
-
-enum LogCategory { ui, function }
-
-enum LogLevel { info, success, warning, error }
+import '../utils/log_manager.dart' as lm;
 
 class LogEntry {
   final DateTime timestamp;
-  final LogCategory category;
-  final LogLevel level;
+  final lm.LogCategory category;
+  final lm.LogLevel level;
   final String tag; // optional small tag like FUNCTION: connectToSupabase or UI
   final String message;
 
   LogEntry(
     this.category,
     this.message, {
-    this.level = LogLevel.info,
+    this.level = lm.LogLevel.info,
     this.tag = '',
   }) : timestamp = DateTime.now();
 
   Map<String, Object?> toMap() => {
     'timestamp': timestamp.toIso8601String(),
-    'category': LogCategory.values.indexOf(category),
-    'level': LogLevel.values.indexOf(level),
+    'category': lm.LogCategory.values.indexOf(category),
+    'level': lm.LogLevel.values.indexOf(level),
     'tag': tag,
     'message': message,
   };
 
   static LogEntry fromMap(Map v) {
     final idx = v['category'] is int ? v['category'] as int : 0;
-    final cat = LogCategory.values[idx.clamp(0, LogCategory.values.length - 1)];
+    final cat = lm.LogCategory.values[idx.clamp(0, lm.LogCategory.values.length - 1)];
     final lvlIdx = v['level'] is int ? v['level'] as int : 0;
-    final lvl = LogLevel.values[lvlIdx.clamp(0, LogLevel.values.length - 1)];
+    final lvl = lm.LogLevel.values[lvlIdx.clamp(0, lm.LogLevel.values.length - 1)];
     final msg = v['message']?.toString() ?? '';
     final tag = v['tag']?.toString() ?? '';
     final entry = LogEntry(cat, msg, level: lvl, tag: tag);
@@ -52,6 +51,31 @@ class SyncProvider extends ChangeNotifier {
     _loadCountsAndLastSync();
     _loadUser();
     _loadSessions();
+    loadSimPreference();
+    refreshSims();
+
+    // Listen to real-time logs from LogManager
+    lm.LogManager().stream.listen((log) {
+      addLog(
+          log.category,
+          log.message,
+          level: log.level,
+          tag: log.functionName ?? '');
+    });
+
+    // Start a periodic timer to pull counts and SIM status (less frequent)
+    _refreshTimer = Timer.periodic(const Duration(milliseconds: 1000), (timer) {
+      refreshCounts();
+      refreshPersistedLogs();
+      // Periodically refresh SIMs in case they changed at OS level
+      refreshSims();
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
   bool _isSyncing = false;
   UserModel? _user;
@@ -61,12 +85,19 @@ class SyncProvider extends ChangeNotifier {
   DateTime? _lastSync;
   String? _deviceId;
   final List<LogEntry> _logs = <LogEntry>[];
-  LogCategory? _activeFilter = LogCategory.function;
-  LogLevel? _activeLevelFilter;
+  lm.LogCategory? _activeFilter = lm.LogCategory.function;
+  lm.LogLevel? _activeLevelFilter;
   final List<String> _webViewMessagesIn = <String>[];
   final List<String> _webViewMessagesOut = <String>[];
+  bool _showLiveLogs = true;
+  List<Map<String, dynamic>> _availableSims = [];
+  String? _defaultSimId;
+
+  // Polling timer for real-time updates
+  Timer? _refreshTimer;
 
   bool get isSyncing => _isSyncing;
+  bool get showLiveLogs => _showLiveLogs;
   int get pending => _pending;
   int get synced => _synced;
   DateTime? get lastSync => _lastSync;
@@ -74,11 +105,13 @@ class SyncProvider extends ChangeNotifier {
   UserModel? get user => _user;
   List<Map<String, dynamic>> get pastSessions =>
       List.unmodifiable(_pastSessions);
-  LogCategory? get activeFilter => _activeFilter;
-  LogLevel? get activeLevelFilter => _activeLevelFilter;
+  lm.LogCategory? get activeFilter => _activeFilter;
+  lm.LogLevel? get activeLevelFilter => _activeLevelFilter;
   List<LogEntry> get allLogs => List.unmodifiable(_logs);
   List<String> get webViewMessagesIn => List.unmodifiable(_webViewMessagesIn);
   List<String> get webViewMessagesOut => List.unmodifiable(_webViewMessagesOut);
+  List<Map<String, dynamic>> get availableSims => _availableSims;
+  String? get defaultSimId => _defaultSimId;
 
   List<LogEntry> get filteredLogs {
     return _logs
@@ -134,57 +167,93 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setFilter(LogCategory? c) {
+  void setFilter(lm.LogCategory? c) {
+    LoggerService.info("SyncProvider: Setting filter to $c");
     _activeFilter = c;
     notifyListeners();
   }
 
-  void setLevelFilter(LogLevel? l) {
+  void setShowLiveLogs(bool value) {
+    LoggerService.info("SyncProvider: Setting showLiveLogs to $value");
+    _showLiveLogs = value;
+    notifyListeners();
+  }
+
+  void setLevelFilter(lm.LogLevel? l) {
     _activeLevelFilter = l;
     notifyListeners();
   }
 
   void addLog(
-    LogCategory category,
+    lm.LogCategory category,
     String message, {
-    LogLevel level = LogLevel.info,
+    lm.LogLevel level = lm.LogLevel.info,
     String tag = '',
   }) {
     final entry = LogEntry(category, message, level: level, tag: tag);
     _logs.add(entry);
-    // persist to Hive for short-term retrieval across restarts
-    try {
-      final box = StorageService.appLogs;
-      box.put(entry.timestamp.toIso8601String(), entry.toMap());
-    } catch (_) {}
+    // Limit in-memory logs
+    if (_logs.length > 1000) {
+      _logs.removeRange(0, _logs.length - 1000);
+    }
     notifyListeners();
   }
 
-  void _loadPersistedLogs() {
+  /// Load SIM Preference
+  void loadSimPreference() {
+    _defaultSimId = StorageService.getDefaultSim();
+    notifyListeners();
+  }
+
+  /// Update Default SIM
+  Future<void> setDefaultSim(String? simId) async {
+    LoggerService.info("📱 SyncProvider: Setting default SIM to $simId (Previous: $_defaultSimId)");
+    _defaultSimId = simId;
+    await StorageService.setDefaultSim(simId);
+    notifyListeners();
+  }
+
+  /// Refresh available SIMs from native
+  Future<void> refreshSims() async {
+    const channel = MethodChannel('com.example.crm3/overlay');
+    try {
+      final List? sims = await channel.invokeMethod('getSimCards');
+      if (sims != null) {
+        _availableSims = sims.map((e) => Map<String, dynamic>.from(e)).toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      LoggerService.error("❌ Failed to fetch SIM cards", e);
+    }
+  }
+
+  /// Pulls logs from Hive that might have been written by background services
+  void refreshPersistedLogs() {
     try {
       final box = StorageService.appLogs;
+      if (box.isEmpty) return;
+
       final keys = box.keys.toList();
+      bool added = false;
       for (final k in keys) {
         final v = box.get(k);
         if (v is Map) {
           try {
             final entry = LogEntry.fromMap(v);
             _logs.add(entry);
-          } catch (_) {
-            // fallback: older shape
-            final idx = v['category'] is int ? v['category'] as int : 0;
-            final cat =
-                LogCategory.values[idx.clamp(0, LogCategory.values.length - 1)];
-            final msg = v['message']?.toString() ?? '';
-            _logs.add(LogEntry(cat, msg));
-          }
+            added = true;
+          } catch (_) {}
         }
       }
-      if (keys.isNotEmpty) {
+      if (added) {
         box.clear();
         notifyListeners();
       }
     } catch (_) {}
+  }
+
+  void _loadPersistedLogs() {
+    refreshPersistedLogs();
   }
 
   void clearLogs() {
@@ -217,26 +286,38 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Load counts and last sync from storage on app start
-  void _loadCountsAndLastSync() {
+  /// Refresh counts and last sync from storage (used for live updates)
+  void refreshCounts() {
     try {
-      // Load pending and synced counts from storage
       final pendingCount = StorageService.callBucket.length;
       final syncedCount = StorageService.syncedBucket.length;
-      _pending = pendingCount;
-      _synced = syncedCount;
-
-      // Load last sync timestamp from storage
       final lastSyncFromStorage = StorageService.getLastSync();
-      if (lastSyncFromStorage != null) {
+
+      bool changed = false;
+
+      if (pendingCount != _pending) {
+        _pending = pendingCount;
+        changed = true;
+      }
+      if (syncedCount != _synced) {
+        _synced = syncedCount;
+        changed = true;
+      }
+      if (lastSyncFromStorage != null &&
+          (_lastSync == null ||
+              lastSyncFromStorage.difference(_lastSync!).inSeconds.abs() > 0)) {
         _lastSync = lastSyncFromStorage;
+        changed = true;
       }
 
-      notifyListeners();
-    } catch (_) {
-      // If storage not ready yet, counts remain 0
-      // They'll be updated by the timer in DevModePage or when sync happens
-    }
+      if (changed) {
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  void _loadCountsAndLastSync() {
+    refreshCounts();
   }
 
   void _loadUser() {

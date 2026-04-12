@@ -15,8 +15,10 @@ import '../constants.dart';
 import '../providers/sync_provider.dart';
 import '../services/logger_service.dart';
 import '../services/webbridge_service.dart';
+import '../utils/log_manager.dart';
 
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class InAppWebViewPage extends StatefulWidget {
   const InAppWebViewPage({super.key});
@@ -169,12 +171,10 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
         await BackgroundService.setup();
       }
 
-      // Initialize Call State Listener
-      _startCallStateListener();
-
       // Initialize services only after permissions are granted
       await Future.delayed(const Duration(milliseconds: 500));
       final callSvc = CallLogService();
+      await callSvc.initializeCallStateListener();
       final newCount = await callSvc.scanAndEnqueueNewCalls();
       final svc = SyncService(
         Supabase.instance.client,
@@ -235,6 +235,65 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
             },
             onLoadStart: (c, uri) {
               LoggerService.ui('WebView load start: ${uri?.toString() ?? ''}');
+              // If it's a deep link (whatsapp/mailto outside http/https), let the device handle it
+              if (uri != null &&
+                  ![
+                    "http",
+                    "https",
+                    "file",
+                    "chrome",
+                    "data",
+                    "javascript",
+                    "about",
+                  ].contains(uri.scheme)) {
+                // Launch WhatsApp/Mail to external app
+                launchUrl(uri, mode: LaunchMode.externalApplication);
+                // Cancel the loading in WebView so it doesn't show "Web page not available"
+                c.stopLoading();
+              }
+            },
+            shouldOverrideUrlLoading: (controller, navigationAction) async {
+              var uri = navigationAction.request.url;
+              if (uri == null) return NavigationActionPolicy.ALLOW;
+
+              bool isWhatsApp =
+                  uri.scheme == 'whatsapp' ||
+                  uri.host == 'wa.me' ||
+                  uri.host == 'api.whatsapp.com';
+
+              // 🚀 SPECIAL HANDLING: WhatsApp
+              if (isWhatsApp) {
+                try {
+                  // Force launch without checking canLaunchUrl (avoids Android visibility issues)
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                } catch (e) {
+                  LoggerService.error("Failed to force launch WhatsApp", e);
+                }
+                return NavigationActionPolicy.CANCEL;
+              }
+
+              // Check for other external schemes
+              if (![
+                "http",
+                "https",
+                "file",
+                "chrome",
+                "data",
+                "javascript",
+                "about",
+              ].contains(uri.scheme)) {
+                try {
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  } else {
+                    LoggerService.warn("Could not launch external link: $uri");
+                  }
+                } catch (e) {
+                  LoggerService.error("Failed to launch URL: $uri", e);
+                }
+                return NavigationActionPolicy.CANCEL;
+              }
+              return NavigationActionPolicy.ALLOW;
             },
             onLoadStop: (controller, uri) async {
               LoggerService.ui('WebView load stop: ${uri?.toString() ?? ''}');
@@ -260,12 +319,10 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
                       await BackgroundService.setup();
                     }
 
-                    // Initialize Call State Listener
-                    _startCallStateListener();
-
                     // Initialize services only after ensuring permissions
                     await Future.delayed(const Duration(milliseconds: 500));
                     final callSvc = CallLogService();
+                    await callSvc.initializeCallStateListener();
                     await callSvc.scanAndEnqueueNewCalls();
                     LoggerService.info(
                       'Initial scan complete, starting sync heartbeat...',
@@ -375,13 +432,5 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
     }
   }
 
-  void _startCallStateListener() {
-    try {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        // Initialize real-time call state listener (like Truecaller)
-        CallLogService().initializeCallStateListener();
-        LoggerService.info('Call state listener initialized');
-      });
-    } catch (_) {}
-  }
+
 }

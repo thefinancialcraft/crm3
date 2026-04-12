@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'storage_service.dart';
 import '../utils/retry.dart';
@@ -43,6 +44,45 @@ class SyncService {
   final Function(int pending, int synced)? onProgress;
   final Map<String, Set<String>> _existingCallCache = {};
   DateTime? _lastCacheUpdate;
+
+  // 🔐 ENCRYPTION CONSTANTS (Replace with actual key)
+  static const String phoneEncryptionKey =
+      "TfcV2_Secure_9Xk2Lp5Nm8Qj4Rs7Vw1Zy3Bd6G";
+
+  // 🧩 HELPER: Compute SHA-256 Hash for Lookup
+  String _computeHash(String phone) {
+    // Backend logic: Remove non-digits, then hash
+    final clean = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    final bytes = utf8.encode(clean);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
+  // 🔓 HELPER: XOR Decrypt (Matches Typescript Logic)
+  String _decryptPhone(String val) {
+    if (!val.startsWith('__enc__')) return val;
+    try {
+      // 1. Remove prefix
+      final base64Part = val.substring(7);
+
+      // 2. Base64 Decode
+      final bytes = base64.decode(base64Part);
+
+      // 3. XOR with Key
+      final keyCodes = phoneEncryptionKey.codeUnits;
+      final decryptedCodes = <int>[];
+
+      for (int i = 0; i < bytes.length; i++) {
+        decryptedCodes.add(bytes[i] ^ keyCodes[i % keyCodes.length]);
+      }
+
+      // 4. Return as String
+      return String.fromCharCodes(decryptedCodes);
+    } catch (e) {
+      LoggerService.error('❌ Decryption failed for $val', e);
+      return val; // Fallback to raw value
+    }
+  }
 
   // 🌉 ISOLATED BRIDGE: Instance-based stream to prevent global collisions
   final _liveUpdateController = StreamController<LiveCallResult>.broadcast();
@@ -198,24 +238,35 @@ class SyncService {
 
     if (normalized.isEmpty) return null;
 
+    final hash = _computeHash(normalized);
+    LoggerService.info('🔍 Sync: Hash lookup: $hash');
+
     try {
+      // 🚀 HYBRID SEARCH: Hash (New) OR Legacy (Old)
       final resp = await client
           .from('customers')
           .select('id, phone_no, customer_name, expiry_date, customer_details')
-          .ilike('phone_no', normalized)
+          .or('phone_search_hash.eq.$hash,phone_no.ilike.$normalized')
           .limit(1)
           .maybeSingle();
 
       LoggerService.info('🔍 Sync: Raw lookup response: $resp');
 
       if (resp != null && resp['phone_no'] != null) {
-        final dbPhone = PhoneUtils.normalize(resp['phone_no'].toString());
+        // 🔓 DECRYPT IF NEEDED
+        String rawPhone = resp['phone_no'].toString();
+        String decryptedPhone = _decryptPhone(rawPhone);
+
+        // Update response with decrypted number for UI/Logic
+        resp['phone_no'] = decryptedPhone;
+
+        final dbPhone = PhoneUtils.normalize(decryptedPhone);
         // Verify match locally to be 100% sure
         final isMatch =
             dbPhone.contains(normalized) || normalized.contains(dbPhone);
 
         LoggerService.info(
-          '🔍 Sync: Match check - DB: $dbPhone vs Local: $normalized = $isMatch',
+          '🔍 Sync: Match check - DB(Decrypted): $dbPhone vs Local: $normalized = $isMatch',
         );
         return isMatch ? resp : null;
       }
@@ -225,7 +276,7 @@ class SyncService {
       );
       return null;
     } catch (e) {
-      LoggerService.warn('🔍 Sync: Customer lookup failed: $e');
+      LoggerService.error('🔍 Sync: Customer lookup failed for $phoneNo', e);
       return null;
     }
   }
@@ -297,7 +348,7 @@ class SyncService {
     _liveUpdateController.add(result);
 
     return {
-      'number': number,
+      'number': normalizedNo,
       'normalized': normalizedNo,
       'name': custName,
       'isPersonal': isPersonal,
@@ -322,14 +373,21 @@ class SyncService {
       final isPersonal = !isCust;
       final name = cust != null ? cust['customer_name'] : null;
 
+      final userMap = StorageService.getUser();
+      final empId = userMap != null
+          ? UserModel.fromJson(userMap).employeeId
+          : null;
+
+      final cleanNumber = PhoneUtils.normalize(number);
       final data = {
-        'number': number,
+        'number': cleanNumber,
         'name': name,
         'call_type': callType,
         'duration': duration,
         'timestamp': ts.toUtc().toIso8601String(),
         'device_id': deviceId,
         'is_personal': isPersonal,
+        'employee_id': empId,
       };
 
       LoggerService.info(
@@ -342,32 +400,36 @@ class SyncService {
         return;
       }
 
-      // 2. Insert into call_history
-      await client.from('call_history').insert(data);
+      // 2. Insert into call_history (Only if NOT personal)
+      if (!isPersonal) {
+        await client.from('call_history').insert(data);
+
+        // Update cache only if we inserted
+        if (_existingCallCache[deviceId] == null) {
+          await _updateExistingCallCache(deviceId);
+        }
+        final key = [
+          cleanNumber,
+          data['timestamp'],
+          duration.toString(),
+          callType,
+        ].join('_');
+        _existingCallCache[deviceId]?.add(key);
+      } else {
+        LoggerService.info('📜 Sync: Skipped personal call upload');
+      }
 
       // 3. 🚀 MASTER MOVE: Update device_sync bookmark right here
       // CallLogService ab isse alag se handle nahi karegi.
       await setDeviceSync(
         deviceId: deviceId,
-        lastSyncCall: '${number}_${ts.millisecondsSinceEpoch}',
+        lastSyncCall: '${cleanNumber}_${ts.millisecondsSinceEpoch}',
         callAt: ts,
       );
 
       LoggerService.info('📜 Sync: History and Bookmark updated successfully');
-
-      // Update cache
-      if (_existingCallCache[deviceId] == null) {
-        await _updateExistingCallCache(deviceId);
-      }
-      final key = [
-        number,
-        data['timestamp'],
-        duration.toString(),
-        callType,
-      ].join('_');
-      _existingCallCache[deviceId]?.add(key);
     } catch (e) {
-      LoggerService.error('❌ Sync: Failed to log call and bookmark', e);
+      LoggerService.error('❌ Sync: Failed to log call and bookmark for $number', e);
     }
   }
 
@@ -520,10 +582,32 @@ class SyncService {
         final number = modelMap['number']?.toString();
         final cust = await lookupCustomer(number);
         final isCust = cust != null;
+
         modelMap['is_personal'] = !isCust;
+
+        if (!isCust) {
+          // It's personal -> Skip upload but mark as synced/removed from queue
+          final id = call['id']?.toString();
+          if (id != null) {
+            StorageService.syncedBucket.put(
+              id,
+              DateTime.now().toIso8601String(),
+            );
+            StorageService.callBucket.delete(id);
+            LoggerService.info('Skipped personal call upload: $id');
+          }
+          continue;
+        }
 
         // Ensure call_type is set (usually already in model)
         // modelMap['call_type'] = modelMap['call_type'] ?? 'unknown';
+
+        if (modelMap['employee_id'] == null) {
+          final userMap = StorageService.getUser();
+          modelMap['employee_id'] = userMap != null
+              ? UserModel.fromJson(userMap).employeeId
+              : null;
+        }
 
         // Remove custom id to let Supabase generate UUID
         modelMap.remove('id');
@@ -544,15 +628,16 @@ class SyncService {
       return;
     }
 
-    // Process in smaller batches to avoid timeouts
-    const batchSize = 50;
+    // Process in smaller batches (e.g. 5) to provide real-time UI updates
+    const batchSize = 5;
     for (var i = 0; i < toUpload.length; i += batchSize) {
       final batch = toUpload.skip(i).take(batchSize).toList();
       final batchModels = batch.map((c) => c['model']).toList();
 
       try {
         await Retry.retry(() async {
-          await client.from('call_history').insert(batchModels).select();
+          final response = await client.from('call_history').insert(batchModels).select();
+          LoggerService.info('📤 Sync: Successfully uploaded batch of ${batchModels.length} calls. Response: ${response.length} rows.');
         });
 
         // Mark successful batch as synced

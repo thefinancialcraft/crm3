@@ -115,4 +115,22 @@ class StorageService {
       await meta.put('userSessions', sessions);
     } catch (_) {}
   }
+
+  // SIM Preference
+  static String? getDefaultSim() {
+    try {
+      return meta.get('defaultSimId')?.toString();
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> setDefaultSim(String? simId) async {
+    try {
+      if (simId == null) {
+        await meta.delete('defaultSimId');
+      } else {
+        await meta.put('defaultSimId', simId);
+      }
+    } catch (_) {}
+  }
 }

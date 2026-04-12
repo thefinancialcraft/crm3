@@ -16,59 +16,51 @@ class PermissionService {
     // Request notification permission first
     if (Platform.isAndroid || Platform.isIOS) {
       try {
-        final notificationStatus = await Permission.notification.request();
-        LoggerService.info(
-          'Notification permission status: $notificationStatus',
-        );
+        final status = await Permission.notification.request();
+        LoggerService.info('📢 Notification permission: $status');
       } catch (e) {
-        LoggerService.warn('Notification permission request failed: $e');
+        LoggerService.error('❌ Notification permission request failed', e);
       }
     }
 
-    // Then request phone permission on Android
+    // Then request phone permissions on Android
     if (Platform.isAndroid) {
       try {
-        final phoneStatus = await Permission.phone.request();
-        LoggerService.info('Phone permission status: $phoneStatus');
-
-        // Also request call logs permission explicitly if needed for newer Android
-        // though strictly 'phone' covers core features, sometimes logs are separate.
-        // For now sticking to phone as per existing code.
+        final status = await Permission.phone.request();
+        LoggerService.info('📞 Phone permission: $status');
       } catch (e) {
-        LoggerService.warn('Phone permission request failed: $e');
+        LoggerService.error('❌ Phone permissions request failed', e);
       }
     }
 
     // Finally request contacts permission
     if (Platform.isAndroid || Platform.isIOS) {
       try {
-        final contactsStatus = await Permission.contacts.request();
-        LoggerService.info('Contacts permission status: $contactsStatus');
+        final status = await Permission.contacts.request();
+        LoggerService.info('👤 Contacts permission: $status');
       } catch (e) {
-        LoggerService.warn('Contacts permission request failed: $e');
+        LoggerService.error('❌ Contacts permission request failed', e);
       }
     }
+
     // Request System Alert Window permission for overlay
     if (Platform.isAndroid) {
       try {
-        final overlayStatus = await Permission.systemAlertWindow.request();
-        LoggerService.info('Overlay permission status: $overlayStatus');
+        final status = await Permission.systemAlertWindow.request();
+        LoggerService.info('🪟 Overlay permission: $status');
 
-        final batteryStatus = await Permission.ignoreBatteryOptimizations
-            .request();
-        LoggerService.info('Battery optimization status: $batteryStatus');
+        final battery = await Permission.ignoreBatteryOptimizations.request();
+        LoggerService.info('🔋 Battery optimization: $battery');
       } catch (e) {
-        LoggerService.warn('Overlay/Battery permission request failed: $e');
+        LoggerService.error('❌ Overlay/Battery permission request failed', e);
       }
     }
 
-    // Double check phone permission on Android
-    if (Platform.isAndroid && await Permission.phone.isDenied) {
-      LoggerService.warn('Phone permission still denied; requesting again');
-      try {
+    // Double check phone and notification permissions on Android
+    if (Platform.isAndroid) {
+      if (await Permission.phone.isDenied) {
+        LoggerService.warn('⚠️ Phone permission still denied; retrying...');
         await Permission.phone.request();
-      } catch (e) {
-        LoggerService.warn('Phone permission request failed: $e');
       }
     }
   }
