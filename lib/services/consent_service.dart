@@ -23,4 +23,24 @@ class ConsentService {
       LoggerService.warn('Failed to save consent status: $e');
     }
   }
+
+  static const String _hasFinishedOnboardingKey = 'has_finished_onboarding';
+  
+  static Future<bool> hasFinishedOnboarding() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_hasFinishedOnboardingKey) ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  static Future<void> markOnboardingComplete() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_hasFinishedOnboardingKey, true);
+    } catch (e) {
+      LoggerService.warn('Failed to save onboarding status: $e');
+    }
+  }
 }

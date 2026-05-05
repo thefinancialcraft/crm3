@@ -6,44 +6,22 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.PixelFormat
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.telephony.PhoneStateListener
-import android.telephony.TelephonyManager
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewConfiguration
-import android.view.WindowManager
+import android.provider.Settings
 import android.util.Log
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
-
-import io.flutter.embedding.android.FlutterTextureView
-import io.flutter.embedding.android.FlutterView
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.FlutterInjector
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugins.GeneratedPluginRegistrant
-import kotlin.math.abs
+import androidx.core.content.ContextCompat
 
 class CallService : Service() {
 
-    private val CHANNEL_NAME = "com.example.crm3/overlay"
-    private var windowManager: WindowManager? = null
-    private var flutterView: FlutterView? = null
-    private var flutterEngine: FlutterEngine? = null
-    private var methodChannel: MethodChannel? = null
-    private var isOverlayShown = false
-    private var layoutParams: WindowManager.LayoutParams? = null
-
-    private var rootLayout: android.widget.FrameLayout? = null
-    private lateinit var telephonyManager: TelephonyManager
-    private var isListening = false
-
+    private val NOTIFICATION_ID = 9999
+    
     companion object {
-        var currentPhoneNumber: String? = null
         var preStartData: Map<String, Any>? = null
         private var instance: CallService? = null
 
@@ -54,103 +32,64 @@ class CallService : Service() {
         }
     }
 
-    private val phoneStateListener = object : PhoneStateListener() {
-        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-            super.onCallStateChanged(state, phoneNumber)
-            if (phoneNumber != null && phoneNumber.isNotEmpty()) {
-                currentPhoneNumber = phoneNumber
-            }
-            val stateStr = when (state) {
-                TelephonyManager.CALL_STATE_RINGING -> "RINGING"
-                TelephonyManager.CALL_STATE_OFFHOOK -> "OFFHOOK"
-                TelephonyManager.CALL_STATE_IDLE -> {
-                    currentPhoneNumber = null 
-                    "IDLE"
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private lateinit var prefs: android.content.SharedPreferences
+    private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
+        if (key == "flutter.last_lookup_result") {
+            val json = p.getString(key, null)
+            if (json != null) {
+                try {
+                    val map = mutableMapOf<String, Any>()
+                    val jsonObj = org.json.JSONObject(json)
+                    val keys = jsonObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        map[k] = jsonObj.get(k)
+                    }
+                    Log.d("CallService", "Detected lookup result in prefs: $map")
+                    updateOverlayData(map)
+                } catch (e: Exception) {
+                    Log.e("CallService", "Failed to parse pref lookup: $e")
                 }
-                else -> "IDLE"
             }
-            handleCallState(stateStr, phoneNumber ?: currentPhoneNumber)
         }
     }
-
-    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         createNotificationChannel()
-        // startForeground MUST be called within 5 seconds of the service being started.
-        // We call it immediately with a low-priority notification.
-        startForeground(9999, createNotification())
-        
-        telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-           // For Android 12+, we should ideally use TelephonyCallback, 
-           // but for now let's just ensure we don't block.
+
+        prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+
+        // Foreground service start — version-wise sahi type use karo
+        val notification = createNotification()
+        try {
+            when {
+                Build.VERSION.SDK_INT >= 34 -> // Android 14+
+                    startForeground(
+                        NOTIFICATION_ID, notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    )
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> // Android 10-13
+                    startForeground(
+                        NOTIFICATION_ID, notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    )
+                else -> // Android 9 aur neeche
+                    startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("CallService", "startForeground failed: ${e.message}")
+            // Last resort fallback
+            try { startForeground(NOTIFICATION_ID, notification) } catch (_: Exception) {}
         }
-        telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
-        isListening = true
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        
-        // Don't call initFlutterEngine() here. Let onStartCommand or handleCallState call it.
-    }
 
-    private fun initFlutterEngine() {
-        if (flutterEngine == null) {
-            flutterEngine = FlutterEngine(this)
-            GeneratedPluginRegistrant.registerWith(flutterEngine!!)
-            
-            methodChannel = MethodChannel(flutterEngine!!.dartExecutor.binaryMessenger, CHANNEL_NAME)
-            methodChannel?.setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "closeOverlay" -> {
-                        hideOverlay()
-                        result.success(null)
-                    }
-                    "getNativeNumber" -> result.success(currentPhoneNumber)
-                    "getPreStartData" -> result.success(preStartData)
-                    "updateLookupResult" -> {
-                        val args = call.arguments as? Map<String, Any>
-                        if (args != null) updateOverlayData(args)
-                        result.success(null)
-                    }
-                    "showOverlayWithData" -> {
-                        val args = call.arguments as? Map<String, Any>
-                        if (args != null) {
-                            updateOverlayData(args)
-                            showOverlay()
-                        }
-                        result.success(null)
-                    }
-                    "updateHeight" -> {
-                        val height = call.argument<Int>("height") ?: WindowManager.LayoutParams.WRAP_CONTENT
-                        layoutParams?.let {
-                            it.height = if (height > 0) height else WindowManager.LayoutParams.WRAP_CONTENT
-                            if (isOverlayShown && rootLayout != null && rootLayout?.isAttachedToWindow == true) {
-                                try {
-                                    // Update Window
-                                    windowManager?.updateViewLayout(rootLayout, it)
-                                    // Update RootLayout internal params to force Flutter to re-layout
-                                    rootLayout?.layoutParams?.height = it.height
-                                    rootLayout?.requestLayout()
-                                } catch (e: Exception) {
-                                    Log.e("CallService", "Error updating height", e)
-                                }
-                            }
-                        }
-                        result.success(null)
-                    }
-                    else -> result.notImplemented()
-                }
-            }
-
-            val flutterLoader = FlutterInjector.instance().flutterLoader()
-            flutterLoader.startInitialization(this)
-            flutterLoader.ensureInitializationCompleteAsync(this, null, android.os.Handler(android.os.Looper.getMainLooper())) {
-                val entrypoint = DartExecutor.DartEntrypoint(flutterLoader.findAppBundlePath(), "overlayMain")
-                flutterEngine!!.dartExecutor.executeDartEntrypoint(entrypoint)
-                Log.d("CallService", "Flutter engine executed with entrypoint 'overlayMain'")
-            }
+        CallManager.getInstance(this).apply {
+            onCallStateChanged = { state, number -> handleCallState(state, number) }
+            startListening()
         }
     }
 
@@ -158,166 +97,214 @@ class CallService : Service() {
         val state = intent?.getStringExtra("state")
         val number = intent?.getStringExtra("number")
         val command = intent?.getStringExtra("command")
-        if (command == "showOverlayWithData") showOverlay()
-        else if (command == "closeOverlay") hideOverlay()
-        else if (state != null) handleCallState(state, number)
+        
+        Log.d("CallService", "onStartCommand: command=$command, state=$state, number=$number")
+
+        when (command) {
+            "showOverlayWithData" -> OverlayManager.getInstance(this).showOverlay()
+            "closeOverlay" -> OverlayManager.getInstance(this).hideOverlay()
+            else -> {
+                if (state != null) {
+                    // 🚀 Proactive Overlay: Show immediately if we know we are ringing or active
+                    if (state == "RINGING" || state == "OFFHOOK" || state == TelephonyManager.EXTRA_STATE_RINGING || state == TelephonyManager.EXTRA_STATE_OFFHOOK) {
+                        OverlayManager.getInstance(this).showOverlay()
+                    }
+                    CallManager.getInstance(this).updateState(state, number)
+                }
+            }
+        }
         return START_STICKY
     }
 
-    private fun handleCallState(state: String?, number: String?) {
-        if (number != null) {
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // App swipe karke band ho to bhi service restart karo — Vivo ke liye zaroori
+        val restartIntent = Intent(applicationContext, CallService::class.java).apply {
+            setPackage(packageName)
+        }
+        val restartPendingIntent = PendingIntent.getService(
+            this, 1, restartIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        try {
+            alarmManager.set(
+                AlarmManager.ELAPSED_REALTIME,
+                android.os.SystemClock.elapsedRealtime() + 1000,
+                restartPendingIntent
+            )
+        } catch (e: Exception) {
+            Log.e("CallService", "onTaskRemoved restart failed: $e")
+        }
+    }
+
+    private fun handleCallState(state: String, number: String?) {
+        if (number != null && number.isNotEmpty()) {
             val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
             prefs.edit().putString("flutter.current_call_number", number).apply()
         }
         when (state) {
-            "IDLE" -> hideOverlay()
-            "RINGING", "OFFHOOK" -> initFlutterEngine()
-        }
-    }
-
-    fun pushDataToOverlay(data: Map<String, Any>) {
-        try { methodChannel?.invokeMethod("updateData", data) } catch (e: Exception) {}
-    }
-
-    private fun getStatusBarHeight(): Int {
-        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
-    }
-
-    private fun showOverlay() {
-        if (isOverlayShown) return
-        
-        if (flutterEngine == null) {
-            initFlutterEngine()
-            // The actual addView will be handled after initialization if we want to be safe,
-            // but for now, let's just let it return and rely on the next update or a small delay.
-            // Actually, let's just initialize and then proceed if possible.
-        }
-        
-        if (flutterEngine == null) {
-            Log.e("CallService", "Cannot show overlay: Flutter engine is null")
-            return
-        }
-
-        val displayMetrics = resources.displayMetrics
-        
-        flutterView = FlutterView(this, FlutterTextureView(this))
-        flutterView?.attachToFlutterEngine(flutterEngine!!)
-
-        rootLayout = object : android.widget.FrameLayout(this) {
-            private var initialX = 0; private var initialY = 0
-            private var initialTouchX = 0f; private var initialTouchY = 0f
-            private var isDragging = false
-            private val touchSlop = ViewConfiguration.get(this@CallService).scaledTouchSlop
-            private val screenWidth = displayMetrics.widthPixels
-
-            override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = this@CallService.layoutParams?.x ?: 0
-                        initialY = this@CallService.layoutParams?.y ?: 0
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        isDragging = false
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = abs(event.rawX - initialTouchX)
-                        val dy = abs(event.rawY - initialTouchY)
-                        if (dx > touchSlop || dy > touchSlop) {
-                            isDragging = true
-                            return true // Steal touch from Flutter button
-                        }
+            "IDLE" -> {
+                preStartData = null
+                val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                prefs.edit().remove("flutter.current_call_number").remove("flutter.last_lookup_result").apply()
+                OverlayManager.getInstance(this).hideOverlay()
+            }
+            "RINGING", "OFFHOOK" -> {
+                val overlayManager = OverlayManager.getInstance(this)
+                val data = mutableMapOf<String, Any>("status" to state)
+                if (number != null) {
+                    data["number"] = number
+                    // 🚀 Fetch name from phone contacts if available
+                    getContactName(this, number)?.let { 
+                        Log.d("CallService", "Found contact name in phonebook: $it")
+                        data["contactName"] = it 
                     }
                 }
-                return false
-            }
+                
+                // 🛡️ CRITICAL: Always update preStartData so new engines get it immediately
+                preStartData = data
 
-            override fun onTouchEvent(event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - initialTouchX
-                        val dy = event.rawY - initialTouchY
-                        
-                        this@CallService.layoutParams?.let {
-                            it.x = initialX + dx.toInt()
-                            it.y = initialY + dy.toInt()
-                            try {
-                                windowManager?.updateViewLayout(this, it)
-                            } catch (e: Exception) {}
-                        }
-                        return true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (isDragging) {
-                            val totalDx = abs(event.rawX - initialTouchX)
-                            if (totalDx > screenWidth * 0.45) {
-                                hideOverlay()
-                            }
-                        }
-                        isDragging = false
-                        return true
-                    }
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)) {
+                    overlayManager.showOverlay()
                 }
-                return super.onTouchEvent(event)
+                
+                if (overlayManager.isOverlayShown) {
+                    overlayManager.pushDataToOverlay(data)
+                }
             }
-        }.apply {
-            isClickable = false
-            isFocusable = false
         }
-        rootLayout?.addView(flutterView)
+    }
 
-        layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = getStatusBarHeight() + 20 
-            width = displayMetrics.widthPixels
+    private fun getContactName(context: Context, phoneNumber: String): String? {
+        if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS) 
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.w("CallService", "READ_CONTACTS permission NOT granted")
+            return null
         }
-
+        
+        // 🛠️ Normalize number for search: Keep only digits and '+'
+        val cleanNumber = phoneNumber.replace(Regex("[^0-9+]"), "")
+        Log.d("CallService", "Searching contact name for: $phoneNumber (Cleaned: $cleanNumber)")
+        
+        // Method 1: PhoneLookup (Android's standard way)
         try {
-            windowManager?.addView(rootLayout, layoutParams)
-            isOverlayShown = true
+            val uri = android.net.Uri.withAppendedPath(
+                android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                android.net.Uri.encode(cleanNumber)
+            )
+            val projection = arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME)
+            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val name = cursor.getString(0)
+                    Log.d("CallService", "Method 1 Success: $name")
+                    return name
+                }
+            }
         } catch (e: Exception) {
-            Log.e("CallService", "Error showing overlay", e)
+            Log.e("CallService", "Method 1 failed: $e")
         }
+        
+        // Method 2: Manual search using LAST 10 DIGITS (Most reliable for Indian numbers)
+        try {
+            val digitsOnly = cleanNumber.replace(Regex("[^0-9]"), "")
+            if (digitsOnly.length >= 10) {
+                val last10 = digitsOnly.takeLast(10)
+                Log.d("CallService", "Method 2 trying with last 10 digits: $last10")
+                
+                val selection = "${android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ?"
+                val selectionArgs = arrayOf("%$last10")
+                
+                context.contentResolver.query(
+                    android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME),
+                    selection, selectionArgs, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0)
+                        Log.d("CallService", "Method 2 Success: $name")
+                        return name
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("CallService", "Method 2 failed: $e")
+        }
+
+        Log.d("CallService", "No contact name found in phonebook for $phoneNumber")
+        return null
     }
 
-    private fun hideOverlay() {
-        if (!isOverlayShown) return
-        try {
-            windowManager?.removeView(rootLayout)
-            flutterView?.detachFromFlutterEngine()
-            flutterView = null
-            rootLayout = null
-            isOverlayShown = false
-        } catch (e: Exception) {}
+    private fun pushDataToOverlay(data: Map<String, Any>) {
+        OverlayManager.getInstance(this).pushDataToOverlay(data)
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        OverlayManager.getInstance(this).handleMemoryPressure()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_MODERATE) {
+            OverlayManager.getInstance(this).handleMemoryPressure()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        if (::prefs.isInitialized) {
+            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        }
         instance = null
-        if (isListening) telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_NONE)
-        flutterEngine?.destroy()
+        CallManager.getInstance(this).stopListening()
+        OverlayManager.getInstance(this).destroyFlutterEngine()
+        
+        // Low RAM devices pe service restart schedule karo
+        scheduleServiceRestart()
+    }
+
+    private fun scheduleServiceRestart() {
+        try {
+            val restartIntent = PendingIntent.getService(
+                this, 0,
+                Intent(this, CallService::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.set(
+                AlarmManager.ELAPSED_REALTIME,
+                android.os.SystemClock.elapsedRealtime() + 2000,
+                restartIntent
+            )
+        } catch (e: Exception) {
+            Log.e("CallService", "Restart schedule failed: $e")
+        }
     }
 
     private fun createNotificationChannel() {
+        // NotificationChannel sirf API 26+ pe exist karta hai
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel("CallServiceChannel", "TFC Nexus Service", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                "CallServiceChannel",
+                "TFC Nexus Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+            }
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(channel)
         }
     }
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, "CallServiceChannel")
-            .setContentTitle("TFC Nexus Active").setSmallIcon(android.R.drawable.sym_def_app_icon).build()
+            .setContentTitle("Call Service Active")
+            .setContentText("Listening for incoming calls")
+            .setSmallIcon(android.R.drawable.sym_def_app_icon)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
     }
 }

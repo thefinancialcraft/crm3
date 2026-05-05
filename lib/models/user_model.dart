@@ -10,6 +10,7 @@ class UserModel {
   final String? createdAt;
   final String? lastSignInAt;
   final String? profilePicUrl;
+  final String? organizationId;
 
   UserModel({
     required this.userName,
@@ -21,6 +22,7 @@ class UserModel {
     this.createdAt,
     this.lastSignInAt,
     this.profilePicUrl,
+    this.organizationId,
   });
 
   // Factory constructor to create a UserModel from a map (JSON)
@@ -38,6 +40,10 @@ class UserModel {
           json['profile_pic_url'] ??
           json['profilePicUrl'] ??
           json['photoURL'], // Common variations
+      organizationId: json['organization_id']?.toString() ?? 
+                     json['organizationId']?.toString() ?? 
+                     json['org_id']?.toString() ??
+                     json['orgId']?.toString(),
     );
   }
 
@@ -53,6 +59,7 @@ class UserModel {
       'created_at': createdAt,
       'last_sign_in_at': lastSignInAt,
       'profile_pic_url': profilePicUrl,
+      'organization_id': organizationId,
     };
   }
 
@@ -65,6 +72,6 @@ class UserModel {
 
   @override
   String toString() {
-    return 'UserModel(userName: $userName, employeeId: $employeeId, role: $role)';
+    return 'UserModel(userName: $userName, employeeId: $employeeId, role: $role, orgId: $organizationId)';
   }
 }

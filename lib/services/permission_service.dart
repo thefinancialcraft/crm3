@@ -1,66 +1,60 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'logger_service.dart';
 
 class PermissionService {
   static Future<void> requestEssential() async {
-    // On web, many permissions are not supported, so we need to handle this gracefully
-    if (kIsWeb) {
-      LoggerService.info(
-        'Running on web - skipping platform-specific permissions',
-      );
-      return;
-    }
+    if (kIsWeb) return;
 
-    // Request notification permission first
+    // 1. Notifications
     if (Platform.isAndroid || Platform.isIOS) {
       try {
-        final status = await Permission.notification.request();
-        LoggerService.info('📢 Notification permission: $status');
+        await Permission.notification.request();
       } catch (e) {
-        LoggerService.error('❌ Notification permission request failed', e);
+        LoggerService.error('Notification permission failed', e);
       }
     }
 
-    // Then request phone permissions on Android
+    // 2. Phone permissions
     if (Platform.isAndroid) {
       try {
-        final status = await Permission.phone.request();
-        LoggerService.info('📞 Phone permission: $status');
-      } catch (e) {
-        LoggerService.error('❌ Phone permissions request failed', e);
-      }
-    }
-
-    // Finally request contacts permission
-    if (Platform.isAndroid || Platform.isIOS) {
-      try {
-        final status = await Permission.contacts.request();
-        LoggerService.info('👤 Contacts permission: $status');
-      } catch (e) {
-        LoggerService.error('❌ Contacts permission request failed', e);
-      }
-    }
-
-    // Request System Alert Window permission for overlay
-    if (Platform.isAndroid) {
-      try {
-        final status = await Permission.systemAlertWindow.request();
-        LoggerService.info('🪟 Overlay permission: $status');
-
-        final battery = await Permission.ignoreBatteryOptimizations.request();
-        LoggerService.info('🔋 Battery optimization: $battery');
-      } catch (e) {
-        LoggerService.error('❌ Overlay/Battery permission request failed', e);
-      }
-    }
-
-    // Double check phone and notification permissions on Android
-    if (Platform.isAndroid) {
-      if (await Permission.phone.isDenied) {
-        LoggerService.warn('⚠️ Phone permission still denied; retrying...');
         await Permission.phone.request();
+      } catch (e) {
+        LoggerService.error('Phone permission failed', e);
+      }
+
+      // READ_CALL_LOG — Android 9+ (API 28+) pe alag permission hai
+      try {
+        final androidInfo = await DeviceInfoPlugin().androidInfo;
+        if (androidInfo.version.sdkInt >= 28) {
+          // permission_handler mein phone permission call log bhi cover karti hai 
+          // agar manifest mein declared ho.
+          await Permission.phone.request();
+          LoggerService.info('READ_CALL_LOG requested for API ${androidInfo.version.sdkInt}');
+        }
+      } catch (e) {
+        LoggerService.error('READ_CALL_LOG permission failed', e);
+      }
+    }
+
+    // 3. Contacts
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        await Permission.contacts.request();
+      } catch (e) {
+        LoggerService.error('Contacts permission failed', e);
+      }
+    }
+
+    // 4. Overlay + Battery
+    if (Platform.isAndroid) {
+      try {
+        await Permission.systemAlertWindow.request();
+        await Permission.ignoreBatteryOptimizations.request();
+      } catch (e) {
+        LoggerService.error('Overlay/Battery permission failed', e);
       }
     }
   }
@@ -85,9 +79,12 @@ class PermissionService {
       if (!await Permission.phone.isGranted) {
         missing.add('Phone (Manage Calls)');
       }
+      /* 
+      // Overlay is now optional as per user request
       if (!await Permission.systemAlertWindow.isGranted) {
         missing.add('Display Over Apps');
       }
+      */
     }
 
     return missing;

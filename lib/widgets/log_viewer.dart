@@ -61,16 +61,17 @@ class _LogViewerState extends State<LogViewer> {
           height: 50,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: Colors.grey.withValues(alpha: 0.1)))),
-          child: ListView(
+          child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            children: [
-              _buildModernChip('ALL', sync.activeFilter == null, () => sync.setFilter(null), primaryColor),
-              _buildModernChip('FUNC', sync.activeFilter == LogCategory.function, () => sync.setFilter(LogCategory.function), Colors.indigo),
-              _buildModernChip('UI', sync.activeFilter == LogCategory.ui, () => sync.setFilter(LogCategory.ui), Colors.teal),
-              VerticalDivider(width: 24, indent: 12, endIndent: 12, color: Colors.grey.withValues(alpha: 0.1)),
-              _buildIconButton(Icons.download_rounded, primaryColor, () => _exportLogs(sync.filteredLogs)),
-              _buildIconButton(Icons.delete_sweep_rounded, Colors.redAccent, () => sync.clearLogs()),
-            ],
+            child: Row(
+              children: [
+                _buildModernChip('ALL', sync.activeFilter == null, () => sync.setFilter(null), primaryColor),
+                _buildModernChip('FUNC', sync.activeFilter == LogCategory.function, () => sync.setFilter(LogCategory.function), Colors.indigo),
+                _buildModernChip('UI', sync.activeFilter == LogCategory.ui, () => sync.setFilter(LogCategory.ui), Colors.teal),
+                VerticalDivider(width: 24, indent: 12, endIndent: 12, color: Colors.grey.withValues(alpha: 0.1)),
+                _buildIconButton(Icons.download_rounded, primaryColor, () => _exportLogs(sync.filteredLogs)),
+              ],
+            ),
           ),
         ),
         // Log List

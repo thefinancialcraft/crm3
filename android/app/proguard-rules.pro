@@ -1,39 +1,44 @@
-# Flutter wrapper
--keep class io.flutter.app.** { *; }
--keep class io.flutter.plugin.** { *; }
--keep class io.flutter.util.** { *; }
--keep class io.flutter.view.** { *; }
+# Flutter
 -keep class io.flutter.** { *; }
 -keep class io.flutter.plugins.** { *; }
--keep class io.flutter.plugin.editing.** { *; }
+-dontwarn io.flutter.embedding.**
 
-# call_log plugin
--keep class com.example.call_log.**
--keepclassmembers class com.example.call_log.** { *; }
+# Hive
+-keep class com.hive.** { *; }
+-keep @com.google.gson.annotations.SerializedName class * { *; }
 
-# Supabase
--keep class io.supabase.** { *; }
--keep class com.google.crypto.tink.** { *; }
+# Supabase / Realtime / Postgrest
+-keep class io.github.jan.supabase.** { *; }
+-dontwarn io.github.jan.supabase.**
 
-# Flutter background service
--keep class id.flutter.flutter_background_service.** { *; }
+# OkHttp (used by http package)
+-keep class okhttp3.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
+
+# Flutter Local Notifications
 -keep class com.dexterous.** { *; }
 
-# Don't obfuscate serializable classes
--keepclassmembers class * implements java.io.Serializable {
-    static final long serialVersionUID;
-    private static final java.io.ObjectStreamField[] serialPersistentFields;
-    private void writeObject(java.io.ObjectOutputStream);
-    private void readObject(java.io.ObjectInputStream);
-    java.lang.Object writeReplace();
-    java.lang.Object readResolve();
-}
+# Flutter Background Service
+-keep class id.flutter.flutter_background_service.** { *; }
 
-# Keep permission annotations
--keepattributes RuntimeVisibleAnnotations
--keep class androidx.annotation.** { *; }
+# In-App Update
+-keep class com.google.android.play.core.** { *; }
 
-# Google Play Core (optional dependency for dynamic features)
--dontwarn com.google.android.play.core.splitcompat.**
--dontwarn com.google.android.play.core.splitinstall.**
--dontwarn com.google.android.play.core.tasks.**
+# flutter_inappwebview
+-keep class com.pichillilorenzo.flutter_inappwebview.** { *; }
+-dontwarn com.pichillilorenzo.**
+
+# phone_state
+-keep class dev.fluttercommunity.plus.** { *; }
+
+# Kotlin
+-keep class kotlin.** { *; }
+-dontwarn kotlin.**
+-keepattributes *Annotation*
+-keepattributes Signature
+
+# OkHttp TLS platform providers (not used on Android, safe to ignore)
+-dontwarn org.bouncycastle.jsse.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**

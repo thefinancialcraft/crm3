@@ -2,16 +2,18 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'storage_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/retry.dart';
 import '../utils/device_utils.dart';
 import 'logger_service.dart';
-import 'package:provider/provider.dart';
-import '../providers/sync_provider.dart';
 import '../models/user_model.dart';
+import '../models/call_log_model.dart';
 import '../utils/phone_utils.dart';
 import 'dart:async';
+import 'call_log_service.dart';
 
 import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 /// 🌉 THE BRIDGE MODEL: Immutable to prevent side-effect collisions
 @immutable
@@ -36,14 +38,65 @@ class LiveCallResult {
 class SyncService {
   static SyncService? _instance;
   static SyncService get instance {
-    _instance ??= SyncService._internal(Supabase.instance.client);
+    if (_instance == null) {
+      _instance = SyncService._internal(Supabase.instance.client);
+      initWatcher(); // 🚀 START WATCHING BUCKET
+    }
     return _instance!;
   }
 
+  // Real-time Notifiers for Dev Mode
+  static final ValueNotifier<String> syncProgressNotifier = ValueNotifier<String>('Idle');
+  static final ValueNotifier<int> pendingCountNotifier = ValueNotifier<int>(0);
+  static final ValueNotifier<bool> isSyncingNotifier = ValueNotifier<bool>(false); // 🔄 SYNC STATUS
+  static final ValueNotifier<Map<String, dynamic>?> lastSyncedCallNotifier = ValueNotifier<Map<String, dynamic>?>(null);
+  
+  // 🛰️ REAL-TIME SYNC STREAM: For live UI updates like the logger
+  static final _syncEventController = StreamController<Map<String, dynamic>>.broadcast();
+  static Stream<Map<String, dynamic>> get syncEvents => _syncEventController.stream;
+
+  // 🔔 AUTO-WATCHER: Update pending count whenever bucket changes
+  static Timer? _watcherDebounceTimer;
+  static void initWatcher() {
+    pendingCountNotifier.value = StorageService.callBucket.length;
+    StorageService.callBucket.listenable().addListener(() {
+      final count = StorageService.callBucket.length;
+      pendingCountNotifier.value = count;
+      
+      // 🚀 REACTIVE SYNC: 5 second debounce to prevent rapid-fire syncs
+      if (count > 0 && !isSyncingNotifier.value) {
+        _watcherDebounceTimer?.cancel();
+        _watcherDebounceTimer = Timer(
+          const Duration(seconds: 5),
+          () => _instance?.scheduleSyncDebounced(delay: Duration.zero)
+        );
+      }
+    });
+  }
+
   final SupabaseClient client;
-  final Function(int pending, int synced)? onProgress;
+  Function(int pending, int synced)? onProgress;
   final Map<String, Set<String>> _existingCallCache = {};
+  final Set<String> _ongoingSyncKeys = {}; // 🚀 TRACKS LIVE UPLOADS
   DateTime? _lastCacheUpdate;
+
+  // 🚀 OPTIMIZATIONS
+  Timer? _syncDebounceTimer;
+  bool _isSyncInProgress = false;
+  
+  final Map<String, Map<String, dynamic>?> _customerCache = {};
+  final Map<String, DateTime> _customerCacheTime = {};
+  static const _customerCacheDuration = Duration(hours: 1);
+  DateTime? _lastLiveUpdate;
+  
+  void scheduleSyncDebounced({Duration delay = const Duration(seconds: 3)}) {
+    _syncDebounceTimer?.cancel();
+    _syncDebounceTimer = Timer(delay, () {
+      if (!_isSyncInProgress) {
+        syncPending();
+      }
+    });
+  }
 
   // 🔐 ENCRYPTION CONSTANTS (Replace with actual key)
   static const String phoneEncryptionKey =
@@ -58,38 +111,164 @@ class SyncService {
     return digest.toString();
   }
 
-  // 🔓 HELPER: XOR Decrypt (Matches Typescript Logic)
-  String _decryptPhone(String val) {
-    if (!val.startsWith('__enc__')) return val;
-    try {
-      // 1. Remove prefix
-      final base64Part = val.substring(7);
-
-      // 2. Base64 Decode
-      final bytes = base64.decode(base64Part);
-
-      // 3. XOR with Key
-      final keyCodes = phoneEncryptionKey.codeUnits;
-      final decryptedCodes = <int>[];
-
-      for (int i = 0; i < bytes.length; i++) {
-        decryptedCodes.add(bytes[i] ^ keyCodes[i % keyCodes.length]);
-      }
-
-      // 4. Return as String
-      return String.fromCharCodes(decryptedCodes);
-    } catch (e) {
-      LoggerService.error('❌ Decryption failed for $val', e);
-      return val; // Fallback to raw value
-    }
-  }
-
   // 🌉 ISOLATED BRIDGE: Instance-based stream to prevent global collisions
   final _liveUpdateController = StreamController<LiveCallResult>.broadcast();
   Stream<LiveCallResult> get liveUpdates => _liveUpdateController.stream;
 
   void dispose() {
     _liveUpdateController.close();
+    stopCommandListener();
+  }
+
+  RealtimeChannel? _commandChannel;
+  Timer? _heartbeatTimer;
+
+  // Track last processed command to avoid infinite loops
+  String? _lastValue;
+  int? _lastAttempts;
+
+  Future<void> startCommandListener() async {
+    final userMap = StorageService.getUser();
+    if (userMap == null) return;
+    
+    final user = UserModel.fromJson(userMap);
+    final info = await DeviceUtils.getDeviceInfo();
+    final androidId = info['androidId'] ?? 'unknown';
+    final entryId = '${user.employeeId}_$androidId';
+    // UNIQUE CHANNEL NAME PER DEVICE
+    final channelName = 'sync_commands_$androidId';
+
+    LoggerService.info('🚀 Sync: Starting Command Listener for $entryId on $channelName');
+
+    await stopCommandListener();
+    startHeartbeat(); // 💓 Start the 30s heartbeat
+
+    // Use a simpler channel name and rely on the filter
+    _commandChannel = client
+        .channel(channelName)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'sync_meta',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'entry_id',
+            value: entryId,
+          ),
+          callback: (payload) async {
+            final data = payload.newRecord;
+            final type = data['type']?.toString();
+            final value = data['value']?.toString();
+            final attempts = int.tryParse(data['command_attempts']?.toString() ?? '0') ?? 0;
+
+            LoggerService.info('🔔 Sync: Received Command Update -> type: $type, value: $value, attempts: $attempts');
+
+            if (type == null || type.isEmpty) {
+              // Command was cleared, reset loop protection
+              _lastValue = null;
+              _lastAttempts = null;
+              return;
+            }
+
+            final callSvc = CallLogService();
+            final currentNo = CallLogService.currentlyTrackedNumber;
+            final isOnCall = CallLogService.isOnCallRealTime;
+
+            final cleanNew = PhoneUtils.normalize(value ?? '');
+            final cleanCurrent = currentNo != null ? PhoneUtils.normalize(currentNo) : '';
+            
+            // Loop protection: Only skip if it's the EXACT same value and attempts count
+            // that we just processed.
+            if (cleanNew == _lastValue && attempts == _lastAttempts) {
+              LoggerService.info('♻️ Sync: Skipping redundant command update');
+              return;
+            }
+            
+            _lastValue = cleanNew;
+            _lastAttempts = attempts;
+
+            LoggerService.info('📥 Remote Command: type=$type, value=$value, attempts=$attempts');
+            
+            if (type == 'call_to') {
+              if (value != null && value.isNotEmpty) {
+                if (cleanNew == cleanCurrent) {
+                  LoggerService.info('🚫 Remote Call: $value already active/dialing, skipping.');
+                  // Clear command if it's already "processed" by being current
+                  await updateSyncMeta(onCall: true, type: null, value: null, commandAttempts: 0);
+                  return;
+                }
+                  
+                  if (attempts >= 3) {
+                    LoggerService.warn('⚠️ Remote Call: Max attempts reached for $value. Clearing command.');
+                    await updateSyncMeta(onCall: isOnCall, type: null, value: null, commandAttempts: 0);
+                    return;
+                  }
+
+                  LoggerService.info('📞 Remote Call: Placing call to $value (Attempt ${attempts + 1})');
+                  
+                  // Increment attempt count in DB
+                  // Note: This will re-trigger the listener, so we should be careful.
+                  // But since we are about to place the call, the next trigger will likely 
+                  // see isOnCall=true or just skip if the number is the same.
+                  await updateSyncMeta(
+                    onCall: isOnCall,
+                    commandAttempts: attempts + 1,
+                    // Keep type/value so we know we are still trying
+                  );
+                  
+                await callSvc.placeDirectCall(value);
+              }
+            } else if (type == 'call_disconnect') {
+              if (isOnCall) {
+                LoggerService.info('📞 Remote Disconnect: Hanging up active call.');
+                await callSvc.disconnectCall();
+              } else {
+                LoggerService.info('🚫 Remote Disconnect: No active call to hang up.');
+                // Clear the command since there's nothing to do
+                await updateSyncMeta(onCall: false, type: null, value: null, commandAttempts: 0);
+              }
+            }
+          },
+        )
+        .subscribe((status, error) {
+          if (error != null) {
+            LoggerService.error('📡 Sync: Command Listener Error: $error', error);
+          } else {
+            LoggerService.info('📡 Sync: Command Listener Status: $status');
+          }
+        });
+  }
+
+  Future<void> startHeartbeat() async {
+    _heartbeatTimer?.cancel();
+    LoggerService.info('💓 Sync: Heartbeat initialized (30s interval)');
+    
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+      if (!StorageService.isLoggedIn()) {
+        stopHeartbeat();
+        return;
+      }
+      
+      LoggerService.info('💓 Sync: Heartbeat pulse');
+      await updateSyncMeta(); // Updates last_seen in DB
+    });
+  }
+
+  void stopHeartbeat() {
+    if (_heartbeatTimer != null) {
+      LoggerService.info('🛑 Sync: Stopping Heartbeat');
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
+    }
+  }
+
+  Future<void> stopCommandListener() async {
+    stopHeartbeat(); // Stop heartbeat when listener stops
+    if (_commandChannel != null) {
+      LoggerService.info('🛑 Sync: Stopping Command Listener');
+      await client.removeChannel(_commandChannel!);
+      _commandChannel = null;
+    }
   }
 
   SyncService._internal(this.client, {this.onProgress});
@@ -112,6 +291,8 @@ class SyncService {
     String? customerName,
     String? type,
     String? value,
+    String? callingStatus,
+    int? commandAttempts,
   }) async {
     LoggerService.info(
       '🔄 updateSyncMeta called (isLogin: $isLogin, onCall: $onCall, hasError: ${lastError != null}, type: $type, value: $value)',
@@ -119,16 +300,14 @@ class SyncService {
     try {
       // 1. Get user data immediately
       UserModel? user;
-      try {
-        final ctx = LoggerService.navKey.currentContext;
-        if (ctx != null) {
-          user = ctx.read<SyncProvider>().user;
-        }
-      } catch (_) {}
+      final userMap = StorageService.getUser();
+      if (userMap != null) user = UserModel.fromJson(userMap);
 
-      if (user == null) {
-        final userMap = StorageService.getUser();
-        if (userMap != null) user = UserModel.fromJson(userMap);
+      // If user is null and it's not a login attempt, we might be in a logout transition
+      // We still need the employeeId to update sync_meta
+      if (user == null && isLogin != true) {
+        LoggerService.info('📜 Sync: No user found for sync_meta update');
+        return;
       }
 
       // 2. Fetch device info
@@ -137,33 +316,47 @@ class SyncService {
       final deviceModel = "${info['brand'] ?? ''} ${info['model'] ?? ''}"
           .trim();
 
-      final empId = user?.employeeId ?? 'unknown';
+      if (user == null) {
+        LoggerService.warn('⚠️ Sync: Cannot update sync_meta because user is null');
+        return;
+      }
+
+      final empId = user.employeeId;
       final entryId = '${empId}_$androidId';
       final now = DateTime.now().toUtc().toIso8601String();
 
       final payload = {
         'entry_id': entryId,
-        'employee_id': user?.employeeId,
-        'email': user?.email,
-        'user_name': user?.userName,
+        'employee_id': user.employeeId,
+        'email': user.email,
+        'user_name': user.userName,
         'device_model': deviceModel.isEmpty ? null : deviceModel,
         'android_id': androidId,
         'device_id': androidId,
         'last_synced_at': now,
         'last_error': lastError,
-        'is_login': isLogin, // Pass as-is
         'on_call': onCall ?? false,
+        'organization_id': user.organizationId,
+        'command_attempts': commandAttempts ?? 0,
       };
+
+      // Only update is_login and status if it's explicitly provided (true for login, false for logout)
+      if (isLogin != null) {
+        payload['is_login'] = isLogin;
+        payload['status'] = isLogin ? 'connected' : 'disconnected';
+        if (isLogin) payload['last_login'] = now;
+      }
 
       // Only add these to payload if they are not null,
       // or if we are turning off the call.
       if (onCall == true) {
-        if (dialedNo != null) payload['dialed_no'] = dialedNo;
-        if (isPersonal != null) payload['is_personal'] = isPersonal;
-        if (lastCallType != null) payload['call_type'] = lastCallType;
-        if (customerName != null) payload['customer_name'] = customerName;
+        payload['dialed_no'] = dialedNo;
+        payload['is_personal'] = isPersonal ?? true;
+        payload['call_type'] = lastCallType;
+        payload['customer_name'] = customerName;
         if (type != null) payload['type'] = type;
         if (value != null) payload['value'] = value;
+        if (callingStatus != null) payload['calling_status'] = callingStatus;
       } else if (onCall == false) {
         // Reset fields when call ends
         payload['dialed_no'] = null;
@@ -172,11 +365,11 @@ class SyncService {
         payload['customer_name'] = null;
         payload['type'] = null;
         payload['value'] = null;
+        payload['calling_status'] = null;
+        payload['command_attempts'] = 0;
       }
 
-      if (isLogin == true) {
-        payload['last_login'] = now;
-      }
+      // Handled above in isLogin check
 
       LoggerService.info(
         '📤 Upserting sync_meta for $entryId: ${jsonEncode(payload)}',
@@ -229,56 +422,113 @@ class SyncService {
   }
 
   Future<Map<String, dynamic>?> lookupCustomer(String? phoneNo) async {
-    if (phoneNo == null || phoneNo.isEmpty) {
-      LoggerService.warn('🔍 Sync: No number provided for customer lookup');
-      return null;
-    }
+    if (phoneNo == null || phoneNo.isEmpty) return null;
     final normalized = PhoneUtils.normalize(phoneNo);
-    LoggerService.info('🔍 Sync: Normalizing $phoneNo -> $normalized');
-
     if (normalized.isEmpty) return null;
 
-    final hash = _computeHash(normalized);
-    LoggerService.info('🔍 Sync: Hash lookup: $hash');
+    // 🚀 CACHE CHECK (1 Hour duration)
+    final cachedTime = _customerCacheTime[normalized];
+    if (cachedTime != null &&
+        DateTime.now().difference(cachedTime) < _customerCacheDuration &&
+        _customerCache.containsKey(normalized)) {
+      LoggerService.info('🔍 Sync: Returning cached lookup for $normalized');
+      return _customerCache[normalized];
+    }
 
-    try {
-      // 🚀 HYBRID SEARCH: Hash (New) OR Legacy (Old)
-      final resp = await client
-          .from('customers')
-          .select('id, phone_no, customer_name, expiry_date, customer_details')
-          .or('phone_search_hash.eq.$hash,phone_no.ilike.$normalized')
-          .limit(1)
-          .maybeSingle();
-
-      LoggerService.info('🔍 Sync: Raw lookup response: $resp');
-
-      if (resp != null && resp['phone_no'] != null) {
-        // 🔓 DECRYPT IF NEEDED
-        String rawPhone = resp['phone_no'].toString();
-        String decryptedPhone = _decryptPhone(rawPhone);
-
-        // Update response with decrypted number for UI/Logic
-        resp['phone_no'] = decryptedPhone;
-
-        final dbPhone = PhoneUtils.normalize(decryptedPhone);
-        // Verify match locally to be 100% sure
-        final isMatch =
-            dbPhone.contains(normalized) || normalized.contains(dbPhone);
-
-        LoggerService.info(
-          '🔍 Sync: Match check - DB(Decrypted): $dbPhone vs Local: $normalized = $isMatch',
-        );
-        return isMatch ? resp : null;
-      }
-
-      LoggerService.warn(
-        '🔍 Sync: No matching customer found (Response was null or empty)',
-      );
-      return null;
-    } catch (e) {
-      LoggerService.error('🔍 Sync: Customer lookup failed for $phoneNo', e);
+    // 🚀 LOGIN LOCK: No data fetching without a valid session
+    final userMap = StorageService.getUser();
+    if (userMap == null || !StorageService.isLoggedIn()) {
+      LoggerService.warn('🔍 Sync: Lookup skipped (User not logged in)');
       return null;
     }
+    
+    // 🛡️ CONDITIONAL FILTERING: Use orgId ONLY if is_client is true
+    final bool isClient = userMap['is_client'] == true;
+    final String? orgId = isClient ? StorageService.getOrgId() : null;
+    
+    final hash = _computeHash(normalized);
+    LoggerService.info('🔍 Sync: Starting deep lookup for hash: $hash (Org: $orgId)');
+
+    try {
+      // 🚀 1. Primary Lookup: Customers Table
+      var query = client
+          .from('customers')
+          .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
+          .eq('phone_search_hash', hash);
+      
+      if (orgId != null) {
+        query = query.or('organization_id.eq.$orgId,organization_id.is.null');
+      }
+      
+      final List<dynamic> custResp = await query;
+      
+      if (custResp.isNotEmpty) {
+        LoggerService.info('✅ Sync: Found match in CUSTOMERS table');
+        final match = custResp.first;
+        _customerCache[normalized] = match;
+        _customerCacheTime[normalized] = DateTime.now();
+        return match;
+      }
+
+      // 🚀 2. Secondary Lookup: Rejected Leads
+      LoggerService.info('🔍 Sync: No match in customers, checking REJECTED_LEADS...');
+      var rejQuery = client
+          .from('rejected_leads')
+          .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
+          .eq('phone_search_hash', hash);
+      
+      if (orgId != null) {
+        rejQuery = rejQuery.or('organization_id.eq.$orgId,organization_id.is.null');
+      }
+      
+      final List<dynamic> rejResp = await rejQuery;
+      
+      if (rejResp.isNotEmpty) {
+        LoggerService.info('✅ Sync: Found match in REJECTED_LEADS table');
+        final match = rejResp.first;
+        _customerCache[normalized] = match;
+        _customerCacheTime[normalized] = DateTime.now();
+        return match;
+      }
+
+      // 🚀 3. Tertiary Lookup: Closed Deals
+      LoggerService.info('🔍 Sync: No match in rejected, checking CLOSED_DEALS...');
+      var closedQuery = client
+          .from('closed_deals')
+          .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
+          .eq('phone_search_hash', hash);
+      
+      if (orgId != null) {
+        closedQuery = closedQuery.or('organization_id.eq.$orgId,organization_id.is.null');
+      }
+      
+      final List<dynamic> closedResp = await closedQuery;
+      
+      if (closedResp.isNotEmpty) {
+        LoggerService.info('✅ Sync: Found match in CLOSED_DEALS table');
+        final match = closedResp.first;
+        _customerCache[normalized] = match;
+        _customerCacheTime[normalized] = DateTime.now();
+        return match;
+      }
+
+      LoggerService.info('❌ Sync: No match found in any table for $normalized');
+      return null;
+    } catch (e) {
+      LoggerService.error('🔍 Sync: Customer lookup critical failure for $phoneNo', e);
+      return null;
+    }
+  }
+
+  Future<bool> isNumberPersonal(String number) async {
+    final clean = PhoneUtils.normalize(number);
+    // 1. Check local personal list
+    final personalList = StorageService.getPersonalNumbers();
+    if (personalList.contains(clean)) return true;
+    
+    // 2. Check if it's a CRM customer
+    final cust = await lookupCustomer(number);
+    return cust == null; // If not in CRM, assume personal
   }
 
   Future<Map<String, dynamic>?> updateLiveCallStatus({
@@ -286,6 +536,22 @@ class SyncService {
     String? number,
     String? callType,
   }) async {
+    // 🚀 LOGIN LOCK: No updates without a valid session
+    final userMap = StorageService.getUser();
+    if (userMap == null) return null;
+
+    // 🚀 THROTTLE: Prevent rapid-fire updates (min 2s between writes)
+    final now = DateTime.now();
+    if (_lastLiveUpdate != null && now.difference(_lastLiveUpdate!) < const Duration(seconds: 2)) {
+      LoggerService.info('updateLiveCallStatus throttled');
+      // Still broadcast to local listeners but skip Supabase write
+      if (number != null) {
+         // Local broadcast logic would go here if we wanted to avoid write but update UI
+         // For now, we just proceed if it's been > 2s.
+      }
+    }
+    _lastLiveUpdate = now;
+
     LoggerService.info(
       '🔄 Sync: updateLiveCallStatus (active=$isOnCall, type=$callType, no=$number)',
     );
@@ -344,18 +610,40 @@ class SyncService {
       isOnCall: true,
     );
 
-    // 🌉 BRIDGE: Broadcast this result to anyone listening (LogService/Overlay)
+    // 🌉 BRIDGE: Broadcast this result to anyone listening
     _liveUpdateController.add(result);
 
-    return {
+    // 🛡️ JSON SAFE RETURN: Ensure details are safe for MethodChannel
+    dynamic detailsJson = customerResult?['customer_details'];
+    if (detailsJson is Map || detailsJson is List) {
+      detailsJson = jsonEncode(detailsJson);
+    }
+
+    final Map<String, dynamic> finalMap = {
       'number': normalizedNo,
       'normalized': normalizedNo,
       'name': custName,
       'isPersonal': isPersonal,
-      'status': callType, // 🚀 MATCH: Overlay expects 'status'
-      'expiry_date': customerResult?['expiry_date'],
-      'customer_details': customerResult?['customer_details'],
+      'status': callType, 
+      'expiry_date': customerResult?['expiry_date']?.toString(),
+      'customer_details': detailsJson,
+      'utilities': customerResult?['utilities'],
+      'notes': customerResult?['notes'],
+      'outcome': customerResult?['outcome'],
+      'disposition': customerResult?['disposition'],
+      'sub_disposition': customerResult?['sub_disposition'],
     };
+
+    // 🌉 NATIVE BRIDGE: Write to SharedPreferences so Kotlin CallService can pick it up
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setString('flutter.last_lookup_result', jsonEncode(finalMap));
+      LoggerService.info('✅ Sync: Result pushed to SharedPreferences for Native Bridge');
+    } catch (e) {
+      LoggerService.error('❌ Sync: Failed to push result to SharedPreferences', e);
+    }
+
+    return finalMap;
   }
 
   /// Logs a call to call_history and updates device_sync bookmark in ONE operation
@@ -374,60 +662,46 @@ class SyncService {
       final name = cust != null ? cust['customer_name'] : null;
 
       final userMap = StorageService.getUser();
-      final empId = userMap != null
-          ? UserModel.fromJson(userMap).employeeId
-          : null;
 
       final cleanNumber = PhoneUtils.normalize(number);
-      final data = {
-        'number': cleanNumber,
-        'name': name,
-        'call_type': callType,
-        'duration': duration,
-        'timestamp': ts.toUtc().toIso8601String(),
-        'device_id': deviceId,
-        'is_personal': isPersonal,
-        'employee_id': empId,
-      };
+      // ID Format: phone_timestamp_duration
+      final id = '${cleanNumber}_${ts.millisecondsSinceEpoch}_$duration';
 
-      LoggerService.info(
-        '📜 Sync: Saving call log to Supabase: $callType ($number)',
+      final user = userMap != null ? UserModel.fromJson(userMap) : null;
+
+      // 🚀 QUEUE-FIRST MOVE: Always put in local bucket first, never direct to DB
+      final model = CallLogModel(
+        id: id,
+        number: cleanNumber,
+        name: name, 
+        callType: callType,
+        duration: duration,
+        timestamp: ts.toUtc(),
+        deviceId: deviceId,
+        employeeId: user?.employeeId,
+        userName: user?.userName,
+        organizationId: user?.organizationId,
+        isPersonal: isPersonal,
+        idx: id,
       );
 
-      // 1. Prevent duplicates check
-      if (_isDuplicate(deviceId, data)) {
-        LoggerService.info('📜 Sync: Skipping duplicate manual log');
-        return;
-      }
+      await StorageService.callBucket.put(id, {
+        'model': model.toJson(),
+        'status': 'pending',
+        'attempts': 0,
+      });
 
-      // 2. Insert into call_history (Only if NOT personal)
-      if (!isPersonal) {
-        await client.from('call_history').insert(data);
-
-        // Update cache only if we inserted
-        if (_existingCallCache[deviceId] == null) {
-          await _updateExistingCallCache(deviceId);
-        }
-        final key = [
-          cleanNumber,
-          data['timestamp'],
-          duration.toString(),
-          callType,
-        ].join('_');
-        _existingCallCache[deviceId]?.add(key);
-      } else {
-        LoggerService.info('📜 Sync: Skipped personal call upload');
-      }
-
-      // 3. 🚀 MASTER MOVE: Update device_sync bookmark right here
-      // CallLogService ab isse alag se handle nahi karegi.
+      LoggerService.info('📥 Sync: Call enqueued in local bucket: $id');
+      
+      // Update device_sync bookmark (optional here, but good for tracking)
       await setDeviceSync(
         deviceId: deviceId,
-        lastSyncCall: '${cleanNumber}_${ts.millisecondsSinceEpoch}',
+        lastSyncCall: id,
         callAt: ts,
       );
 
-      LoggerService.info('📜 Sync: History and Bookmark updated successfully');
+      // Trigger background sync (non-blocking)
+      scheduleSyncDebounced();
     } catch (e) {
       LoggerService.error('❌ Sync: Failed to log call and bookmark for $number', e);
     }
@@ -460,8 +734,7 @@ class SyncService {
           final number = r['number']?.toString() ?? '';
           final timestamp = r['timestamp']?.toString() ?? '';
           final duration = r['duration']?.toString() ?? '';
-          final callType = r['call_type']?.toString() ?? '';
-          existingSet.add([number, timestamp, duration, callType].join('_'));
+          existingSet.add([number, timestamp, duration].join('_'));
         } catch (_) {}
       }
 
@@ -478,224 +751,247 @@ class SyncService {
   }
 
   bool _isDuplicate(String deviceId, Map<String, dynamic> modelMap) {
+    String checkKey = 'unknown';
     try {
       final number = modelMap['number']?.toString() ?? '';
-      final ts = DateTime.parse(
-        modelMap['timestamp'],
-      ).toUtc().toIso8601String();
+      final ts = modelMap['timestamp']; 
       final duration = modelMap['duration']?.toString() ?? '';
-      final callType = modelMap['call_type']?.toString() ?? '';
-      final key = [number, ts, duration, callType].join('_');
+      checkKey = [number, ts, duration].join('_');
+      
+      // 1. Check if it's in the Hive Synced Bucket (Most Recent Local Truth)
+      final localId = '${PhoneUtils.normalize(number)}_${ts}_$duration';
+      if (StorageService.syncedBucket.containsKey(localId)) return true;
 
-      return _existingCallCache[deviceId]?.contains(key) ?? false;
+      // 2. Check server cache OR if it's currently being uploaded
+      return (_existingCallCache[deviceId]?.contains(checkKey) ?? false) ||
+             _ongoingSyncKeys.contains(checkKey);
     } catch (e) {
-      LoggerService.warn('Error checking duplicate: $e');
+      LoggerService.warn('Error checking duplicate: $checkKey: $e');
       return false;
     }
   }
 
   Future<void> syncPending() async {
+    // 🚀 LOGIN LOCK: No syncing without a valid session
+    final userMap = StorageService.getUser();
+    if (userMap == null) {
+      LoggerService.warn('♻️ Sync: syncPending skipped (User not logged in)');
+      return;
+    }
+
+    if (_isSyncInProgress) {
+      LoggerService.info('Sync already in progress, skipping concurrent run.');
+      return;
+    }
+    _isSyncInProgress = true;
+    isSyncingNotifier.value = true; // 🔄 Disable buttons
+
     LoggerService.info('SyncService.syncPending started');
     LoggerService.ui('Sync started');
 
     try {
       StorageService.setSyncStatus('running');
-    } catch (_) {}
+      final box = StorageService.callBucket;
 
-    final box = StorageService.callBucket;
-    final keys = box.keys.toList();
+      while (box.isNotEmpty) {
+        // 🚀 BATCHING OPTIMIZATION: Take up to 20 items at a time for bulk processing
+        final allKeys = box.keys.toList();
+        final batchKeys = allKeys.take(20).toList();
+        
+        LoggerService.info('Syncing batch of ${batchKeys.length} items (Total remaining: ${allKeys.length})');
+        syncProgressNotifier.value = 'Syncing ${batchKeys.length} items...';
 
-    LoggerService.info('Pending items in callBucket: ${keys.length}');
-    if (keys.isEmpty) {
-      LoggerService.info('No pending items to sync - updating metadata only');
-      LoggerService.ui('Checking sync status...');
+        // Group calls by device ID
+        final Map<String, List<Map<String, dynamic>>> byDevice = {};
+        for (final key in batchKeys) {
+          try {
+            final data = box.get(key);
+            if (data is! Map) continue;
 
-      // Still update meta even if no calls, as a heartbeat
+            final modelMap = data['model'] as Map?;
+            if (modelMap == null) continue;
+
+            final deviceId = modelMap['device_id']?.toString() ?? await DeviceUtils.getDeviceId();
+            byDevice.putIfAbsent(deviceId, () => []).add({
+              'id': key,
+              'model': Map<String, dynamic>.from(modelMap),
+              'status': data['status'] ?? 'pending',
+              'attempts': data['attempts'] ?? 0,
+            });
+          } catch (e) {
+            LoggerService.warn('Error grouping call $key: $e');
+          }
+        }
+
+        // Process each device's calls
+        for (final deviceId in byDevice.keys) {
+          await _syncDeviceCalls(deviceId, byDevice[deviceId]!);
+        }
+
+        // ⚡ THROTTLING: Give system a breath between batches
+        if (box.isNotEmpty) {
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+
+      // Final cleanup
+      final now = DateTime.now();
+      StorageService.setLastSync(now);
+      StorageService.setSyncStatus('idle');
+
+      // Update sync meta in Supabase
       await updateSyncMeta();
 
-      StorageService.setSyncStatus('idle');
-      return;
-    }
+      LoggerService.info('SyncService.syncPending completed');
+      LoggerService.ui('Sync completed');
 
-    // Group calls by device ID
-    final Map<String, List<Map<String, dynamic>>> byDevice = {};
-    for (final key in keys) {
-      try {
-        final data = box.get(key);
-        if (data is! Map) continue;
-
-        final modelMap = data['model'] as Map?;
-        if (modelMap == null) continue;
-
-        final deviceId =
-            modelMap['device_id']?.toString() ??
-            await DeviceUtils.getDeviceId();
-        byDevice.putIfAbsent(deviceId, () => []).add({
-          'id': key,
-          'model': Map<String, dynamic>.from(modelMap),
-          'status': data['status'] ?? 'pending',
-          'attempts': data['attempts'] ?? 0,
-        });
-      } catch (e) {
-        LoggerService.warn('Error grouping call $key: $e');
+      // Update counts one final time
+      if (onProgress != null) {
+        final pendingCount = StorageService.callBucket.length;
+        final syncedCount = StorageService.syncedBucket.length;
+        onProgress!(pendingCount, syncedCount);
       }
-    }
-
-    // Process each device's calls
-    for (final deviceId in byDevice.keys) {
-      await _syncDeviceCalls(deviceId, byDevice[deviceId]!);
-    }
-
-    // Final cleanup
-    final now = DateTime.now();
-    StorageService.setLastSync(now);
-    StorageService.setSyncStatus('idle');
-
-    // Update sync meta in Supabase
-    await updateSyncMeta();
-
-    LoggerService.info('SyncService.syncPending completed');
-    LoggerService.ui('Sync completed');
-
-    // Update counts one final time
-    if (onProgress != null) {
-      final pendingCount = StorageService.callBucket.length;
-      final syncedCount = StorageService.syncedBucket.length;
-      onProgress!(pendingCount, syncedCount);
+    } catch (e) {
+      LoggerService.error('Sync failed', e);
+    } finally {
+      _isSyncInProgress = false;
+      isSyncingNotifier.value = false;
+      syncProgressNotifier.value = 'Idle';
     }
   }
 
   Future<void> _syncDeviceCalls(
-    String deviceId,
-    List<Map<String, dynamic>> calls,
-  ) async {
-    // Update the cache of existing calls
-    await _updateExistingCallCache(deviceId);
+      String deviceId, List<Map<String, dynamic>> calls) async {
 
-    // Filter out duplicates before attempting sync
-    final toUpload = <Map<String, dynamic>>[];
+      await _updateExistingCallCache(deviceId);
 
-    for (final call in calls) {
-      final modelMap = Map<String, dynamic>.from(call['model']);
-      if (!_isDuplicate(deviceId, modelMap) || call['status'] == 'failed') {
-        // Apply is_personal classification before upload
-        final number = modelMap['number']?.toString();
-        final cust = await lookupCustomer(number);
-        final isCust = cust != null;
+      // Step 1 — Saare numbers ke liye batch customer lookup
+      final uniqueNumbers = calls
+          .map((c) => c['model']['number']?.toString() ?? '')
+          .where((n) => n.isNotEmpty)
+          .toSet();
 
-        modelMap['is_personal'] = !isCust;
+      // Parallel lookup — sab ek saath (but limited)
+      final customerResults = <String, Map<String, dynamic>?>{};
+      final batches = uniqueNumbers.toList();
 
-        if (!isCust) {
-          // It's personal -> Skip upload but mark as synced/removed from queue
-          final id = call['id']?.toString();
-          if (id != null) {
-            StorageService.syncedBucket.put(
-              id,
-              DateTime.now().toIso8601String(),
-            );
-            StorageService.callBucket.delete(id);
-            LoggerService.info('Skipped personal call upload: $id');
+      // 10-10 ke batches mein parallel lookup
+      for (int i = 0; i < batches.length; i += 10) {
+          final batch = batches.skip(i).take(10).toList();
+          final results = await Future.wait(
+              batch.map((phoneNo) => lookupCustomer(phoneNo))
+          );
+          for (int j = 0; j < batch.length; j++) {
+              customerResults[batch[j]] = results[j];
           }
-          continue;
-        }
-
-        // Ensure call_type is set (usually already in model)
-        // modelMap['call_type'] = modelMap['call_type'] ?? 'unknown';
-
-        if (modelMap['employee_id'] == null) {
-          final userMap = StorageService.getUser();
-          modelMap['employee_id'] = userMap != null
-              ? UserModel.fromJson(userMap).employeeId
-              : null;
-        }
-
-        // Remove custom id to let Supabase generate UUID
-        modelMap.remove('id');
-        toUpload.add({'id': call['id'], 'model': modelMap});
-      } else {
-        // Mark duplicate as synced and remove from pending
-        final id = call['id']?.toString();
-        if (id != null) {
-          StorageService.syncedBucket.put(id, DateTime.now().toIso8601String());
-          StorageService.callBucket.delete(id);
-          LoggerService.info('Skipped duplicate call: $id');
-        }
       }
-    }
 
-    if (toUpload.isEmpty) {
-      LoggerService.info('No new calls to sync for device $deviceId');
-      return;
-    }
+      // Step 2 — Filter duplicates, personal calls
+      final toUpload = <Map<String, dynamic>>[];
+      for (final call in calls) {
+          final modelMap = Map<String, dynamic>.from(call['model']);
+          final number = modelMap['number']?.toString() ?? '';
+          final cust = customerResults[number];
 
-    // Process in smaller batches (e.g. 5) to provide real-time UI updates
-    const batchSize = 5;
-    for (var i = 0; i < toUpload.length; i += batchSize) {
-      final batch = toUpload.skip(i).take(batchSize).toList();
-      final batchModels = batch.map((c) => c['model']).toList();
+          if (cust == null) {
+              // Personal call — skip, mark synced
+              final now = DateTime.now().toIso8601String();
+              StorageService.syncedBucket.put(
+                  call['id'], now);
+              StorageService.callBucket.delete(call['id']);
 
+              // Trigger event for UI update
+              final m = Map<String, dynamic>.from(call['model'] as Map);
+              final displayIdx = m['idx'] ?? '${m['number']}_${DateTime.parse(m['timestamp']).millisecondsSinceEpoch}_${m['duration']}';
+              
+              final eventData = {
+                  'number': m['number'],
+                  'name': 'Personal Call',
+                  'call_type': m['call_type'],
+                  'duration': m['duration'],
+                  'timestamp': m['timestamp']?.toString(),
+                  'synced_at': now,
+                  'idx': displayIdx,
+                  'status': 'Personal (Skipped)',
+              };
+
+              lastSyncedCallNotifier.value = eventData;
+              _syncEventController.add(eventData);
+              continue;
+          }
+
+          if (_isDuplicate(deviceId, modelMap)) {
+              StorageService.syncedBucket.put(
+                  call['id'], DateTime.now().toIso8601String());
+              StorageService.callBucket.delete(call['id']);
+              continue;
+          }
+
+          // Customer data attach karo
+          modelMap['is_personal'] = false;
+          modelMap['name'] = cust['customer_name'];
+          modelMap['organization_id'] = cust['organization_id'];
+          modelMap.remove('id');
+          toUpload.add({'id': call['id'], 'model': modelMap});
+      }
+
+      if (toUpload.isEmpty) return;
+
+      // Step 3 — SINGLE bulk upsert (50 calls = 1 DB request)
       try {
-        await Retry.retry(() async {
-          final response = await client.from('call_history').insert(batchModels).select();
-          LoggerService.info('📤 Sync: Successfully uploaded batch of ${batchModels.length} calls. Response: ${response.length} rows.');
-        });
+          syncProgressNotifier.value = 'Syncing ${toUpload.length} calls...';
 
-        // Mark successful batch as synced
-        final now = DateTime.now().toIso8601String();
-        for (final call in batch) {
-          final id = call['id']?.toString();
-          if (id != null) {
-            StorageService.syncedBucket.put(id, now);
-            StorageService.callBucket.delete(id);
+          final bulkData = toUpload.map((item) => item['model'] as Map<String, dynamic>).toList();
+
+          await Retry.retry(() async {
+              await client.from('call_history').upsert(bulkData, onConflict: 'idx');
+          });
+
+          // Success — sab mark karo
+          final now = DateTime.now().toIso8601String();
+          for (final item in toUpload) {
+              final m = item['model'] as Map<String, dynamic>;
+              StorageService.syncedBucket.put(item['id'], {
+                  'syncedAt': now,
+                  'isPersonal': false,
+              });
+              StorageService.callBucket.delete(item['id']);
+
+              // Ensure IDX exists for display
+              final displayIdx = m['idx'] ?? '${m['number']}_${DateTime.parse(m['timestamp']).millisecondsSinceEpoch}_${m['duration']}';
+
+              final eventData = {
+                  ...m,
+                  'synced_at': now,
+                  'idx': displayIdx,
+                  'status': 'Synced',
+              };
+
+              lastSyncedCallNotifier.value = eventData;
+              _syncEventController.add(eventData);
           }
-        }
 
-        // Update the cache with newly synced calls
-        for (final modelMap in batchModels) {
-          try {
-            final number = modelMap['number']?.toString() ?? '';
-            final ts = DateTime.parse(
-              modelMap['timestamp'],
-            ).toUtc().toIso8601String();
-            final duration = modelMap['duration']?.toString() ?? '';
-            final callType = modelMap['call_type']?.toString() ?? '';
-            final key = [number, ts, duration, callType].join('_');
-            _existingCallCache[deviceId]?.add(key);
-          } catch (_) {}
-        }
-
-        // Update progress
-        if (onProgress != null) {
-          final pendingCount = StorageService.callBucket.length;
-          final syncedCount = StorageService.syncedBucket.length;
-          onProgress!(pendingCount, syncedCount);
-        }
-
-        LoggerService.info(
-          'Synced batch of ${batch.length} calls for device $deviceId',
-        );
+          LoggerService.info('✅ Bulk synced ${toUpload.length} calls in 1 request');
       } catch (e) {
-        LoggerService.warn('Error syncing batch for device $deviceId: $e');
+          LoggerService.error('Bulk sync failed: $e');
 
-        // Update sync meta with error
-        await updateSyncMeta(lastError: e.toString());
-
-        // Mark batch as failed
-        for (final call in batch) {
-          try {
-            final id = call['id']?.toString();
-            if (id != null) {
-              final data = StorageService.callBucket.get(id);
-              if (data is Map) {
-                data['status'] = 'failed';
-                data['lastError'] = e.toString();
-                data['attempts'] = (data['attempts'] ?? 0) + 1;
-                StorageService.callBucket.put(id, data);
+          // Failure pe individual retry
+          for (final item in toUpload) {
+              final currentData = StorageService.callBucket.get(item['id']);
+              if (currentData is Map) {
+                  final attempts = (currentData['attempts'] ?? 0) + 1;
+                  if (attempts >= 3) {
+                      StorageService.failedBucket.put(item['id'], currentData);
+                      StorageService.callBucket.delete(item['id']);
+                  } else {
+                      StorageService.callBucket.put(item['id'], {
+                          ...currentData,
+                          'attempts': attempts,
+                          'status': 'failed',
+                      });
+                  }
               }
-            }
-          } catch (_) {}
-        }
+          }
       }
-    }
   }
 }

@@ -7,6 +7,10 @@ class NotificationService {
   static const channelDescription =
       'Shows notifications for call tracking and sync status';
 
+  static const int _callNotifId   = 1001;  // Call related
+  static const int _syncNotifId   = 1002;  // Sync complete
+  static const int _errorNotifId  = 1003;  // Errors
+
   static FlutterLocalNotificationsPlugin? _plugin;
   static bool _initialized = false;
 
@@ -62,7 +66,7 @@ class NotificationService {
     if (!_initialized) await initialize();
 
     await _plugin?.show(
-      1001,
+      _callNotifId,
       'Call Active',
       'Call tracking is active',
       const NotificationDetails(
@@ -108,7 +112,7 @@ class NotificationService {
     if (!_initialized) await initialize();
 
     await _plugin?.show(
-      1001,
+      _callNotifId,
       'Call Detected',
       body,
       const NotificationDetails(
@@ -129,7 +133,7 @@ class NotificationService {
     if (!_initialized) await initialize();
 
     await _plugin?.show(
-      1001,
+      _callNotifId,
       'Call Ended',
       'Syncing call details...',
       const NotificationDetails(
@@ -150,7 +154,7 @@ class NotificationService {
     if (!_initialized) await initialize();
 
     await _plugin?.show(
-      1001,
+      _syncNotifId,
       'Sync Complete',
       'Synced $callCount new call${callCount == 1 ? '' : 's'}',
       const NotificationDetails(
@@ -172,7 +176,7 @@ class NotificationService {
     if (!_initialized) await initialize();
 
     await _plugin?.show(
-      1001,
+      _errorNotifId,
       'Sync Error',
       'Failed to sync calls: $error',
       const NotificationDetails(
@@ -195,7 +199,7 @@ class NotificationService {
   }
 
   static Future<void> clearCallNotification() async {
-    await _plugin?.cancel(1001);
+    await _plugin?.cancel(_callNotifId);
     LoggerService.info('Cleared call notification');
   }
 }

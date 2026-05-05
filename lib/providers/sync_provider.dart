@@ -46,6 +46,26 @@ class LogEntry {
 }
 
 class SyncProvider extends ChangeNotifier {
+  bool _isSyncing = false;
+  UserModel? _user;
+  List<Map<String, dynamic>> _pastSessions = [];
+  int _pending = 0;
+  int _synced = 0;
+  DateTime? _lastSync;
+  String? _deviceId;
+  final List<LogEntry> _logs = <LogEntry>[];
+  lm.LogCategory? _activeFilter; // Default to null (ALL)
+  lm.LogLevel? _activeLevelFilter;
+  final List<Map<String, dynamic>> _webViewMessages = []; // Unified list
+  bool _showLiveLogs = true;
+  List<Map<String, dynamic>> _availableSims = [];
+  String? _defaultSimId;
+  int? _defaultSimSlot;
+
+  // Polling timers for real-time updates
+  Timer? _refreshTimer;
+  Timer? _simTimer;
+
   SyncProvider() {
     _loadPersistedLogs();
     _loadCountsAndLastSync();
@@ -63,11 +83,14 @@ class SyncProvider extends ChangeNotifier {
           tag: log.functionName ?? '');
     });
 
-    // Start a periodic timer to pull counts and SIM status (less frequent)
+    // Refresh counts and persisted logs every second for high-responsiveness
     _refreshTimer = Timer.periodic(const Duration(milliseconds: 1000), (timer) {
       refreshCounts();
       refreshPersistedLogs();
-      // Periodically refresh SIMs in case they changed at OS level
+    });
+
+    // Refresh SIM status every 5 seconds (less frequent to save battery/reduce logs)
+    _simTimer = Timer.periodic(const Duration(milliseconds: 5000), (timer) {
       refreshSims();
     });
   }
@@ -75,27 +98,9 @@ class SyncProvider extends ChangeNotifier {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _simTimer?.cancel();
     super.dispose();
   }
-  bool _isSyncing = false;
-  UserModel? _user;
-  List<Map<String, dynamic>> _pastSessions = [];
-  int _pending = 0;
-  int _synced = 0;
-  DateTime? _lastSync;
-  String? _deviceId;
-  final List<LogEntry> _logs = <LogEntry>[];
-  lm.LogCategory? _activeFilter = lm.LogCategory.function;
-  lm.LogLevel? _activeLevelFilter;
-  final List<String> _webViewMessagesIn = <String>[];
-  final List<String> _webViewMessagesOut = <String>[];
-  bool _showLiveLogs = true;
-  List<Map<String, dynamic>> _availableSims = [];
-  String? _defaultSimId;
-
-  // Polling timer for real-time updates
-  Timer? _refreshTimer;
-
   bool get isSyncing => _isSyncing;
   bool get showLiveLogs => _showLiveLogs;
   int get pending => _pending;
@@ -108,10 +113,10 @@ class SyncProvider extends ChangeNotifier {
   lm.LogCategory? get activeFilter => _activeFilter;
   lm.LogLevel? get activeLevelFilter => _activeLevelFilter;
   List<LogEntry> get allLogs => List.unmodifiable(_logs);
-  List<String> get webViewMessagesIn => List.unmodifiable(_webViewMessagesIn);
-  List<String> get webViewMessagesOut => List.unmodifiable(_webViewMessagesOut);
+  List<Map<String, dynamic>> get webViewMessages => List.unmodifiable(_webViewMessages);
   List<Map<String, dynamic>> get availableSims => _availableSims;
   String? get defaultSimId => _defaultSimId;
+  int? get defaultSimSlot => _defaultSimSlot;
 
   List<LogEntry> get filteredLogs {
     return _logs
@@ -163,7 +168,17 @@ class SyncProvider extends ChangeNotifier {
       StorageService.saveUserSessions(_pastSessions);
     }
     _user = u;
-    StorageService.setUser(u.toJson());
+    // 🛡️ CENTRAL STORAGE: Use the new session method
+    StorageService.setUserSession(u.toJson());
+    notifyListeners();
+  }
+
+  void logout() {
+    LoggerService.info("🔄 SyncProvider: Logging out user ${_user?.userName}");
+    _user = null;
+    _pastSessions = [];
+    // 🛡️ CENTRAL STORAGE: Completely clear the session
+    StorageService.clearUserSession();
     notifyListeners();
   }
 
@@ -202,20 +217,24 @@ class SyncProvider extends ChangeNotifier {
   /// Load SIM Preference
   void loadSimPreference() {
     _defaultSimId = StorageService.getDefaultSim();
+    _defaultSimSlot = StorageService.getDefaultSimSlot();
     notifyListeners();
   }
 
   /// Update Default SIM
-  Future<void> setDefaultSim(String? simId) async {
-    LoggerService.info("📱 SyncProvider: Setting default SIM to $simId (Previous: $_defaultSimId)");
+  Future<void> setDefaultSim(String? simId, [int? slotIndex]) async {
+    LoggerService.info(
+      "📱 SyncProvider: Setting default SIM to $simId, Slot: $slotIndex (Previous: $_defaultSimId)",
+    );
     _defaultSimId = simId;
-    await StorageService.setDefaultSim(simId);
+    _defaultSimSlot = slotIndex;
+    await StorageService.setDefaultSim(simId, slotIndex);
     notifyListeners();
   }
 
   /// Refresh available SIMs from native
   Future<void> refreshSims() async {
-    const channel = MethodChannel('com.example.crm3/overlay');
+    const channel = MethodChannel('com.example.crm3/main');
     try {
       final List? sims = await channel.invokeMethod('getSimCards');
       if (sims != null) {
@@ -265,24 +284,27 @@ class SyncProvider extends ChangeNotifier {
   }
 
   void addWebViewMessageIn(String message) {
-    if (_webViewMessagesIn.length >= 100) {
-      _webViewMessagesIn.removeAt(0);
-    }
-    _webViewMessagesIn.add('${DateTime.now().toIso8601String()}: $message');
-    notifyListeners();
+    _addUnifiedMessage(message, 'IN');
   }
 
   void addWebViewMessageOut(String message) {
-    if (_webViewMessagesOut.length >= 100) {
-      _webViewMessagesOut.removeAt(0);
+    _addUnifiedMessage(message, 'OUT');
+  }
+
+  void _addUnifiedMessage(String message, String type) {
+    if (_webViewMessages.length >= 200) {
+      _webViewMessages.removeAt(0);
     }
-    _webViewMessagesOut.add('${DateTime.now().toIso8601String()}: $message');
+    _webViewMessages.add({
+      'message': message,
+      'type': type,
+      'timestamp': DateTime.now().toIso8601String(),
+    });
     notifyListeners();
   }
 
   void clearWebViewMessages() {
-    _webViewMessagesIn.clear();
-    _webViewMessagesOut.clear();
+    _webViewMessages.clear();
     notifyListeners();
   }
 

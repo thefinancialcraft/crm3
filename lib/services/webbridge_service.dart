@@ -11,6 +11,7 @@ import '../models/user_model.dart';
 import '../providers/sync_provider.dart';
 import '../pages/dev_mode_page.dart';
 import '../utils/device_utils.dart';
+import 'storage_service.dart';
 
 class WebBridgeService {
   static InAppWebViewController? _controller;
@@ -18,6 +19,13 @@ class WebBridgeService {
 
   /// Bridge connection status
   static bool get isConnected => _controller != null;
+
+  static Future<void> updateUrl(String url) async {
+    if (_controller != null) {
+      LoggerService.info("🌐 WebBridge: Updating URL to $url");
+      await _controller!.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+    }
+  }
 
   // =========================
   // 🚀 INITIALIZE BRIDGE
@@ -60,7 +68,7 @@ class WebBridgeService {
               .trim()
               .toLowerCase();
 
-          final value = data['value'] ?? data['Value'];
+          final value = data['value'] ?? data['Value'] ?? data['payload'] ?? data['pay load'];
 
           if (type == null || type.isEmpty) {
             LoggerService.warn("⚠️ Missing event type in $handler payload");
@@ -78,14 +86,27 @@ class WebBridgeService {
 
             case 'login':
               _ack('login_ack', true);
-              LoggerService.info("🚀 WebBridge: Handling login event");
+              LoggerService.info("🚀 WebBridge: Handling login event with payload");
               try {
-                await CallLogService().onUserLogin();
-                await SyncService(
-                  Supabase.instance.client,
-                ).updateSyncMeta(isLogin: true);
+                if (value != null && value is Map) {
+                  final payload = Map<String, dynamic>.from(value);
+                  // 🛡️ CENTRAL STORAGE: Save the entire payload as Single Source of Truth
+                  await StorageService.setUserSession(payload);
+                  
+                  final user = UserModel.fromJson(payload);
+                  LoggerService.info("👤 Login Success: ${user.userName} (${user.employeeId})");
+                  
+                  final ctx = LoggerService.navKey.currentContext;
+                  if (ctx != null && ctx.mounted) {
+                    ctx.read<SyncProvider>().updateUser(user);
+                  }
+                  
+                  // Trigger services with the new session
+                  await CallLogService().onUserLogin(payload);
+                  await SyncService.instance.updateSyncMeta(isLogin: true);
+                }
               } catch (e) {
-                LoggerService.error("❌ Failed to update sync_meta on login", e);
+                LoggerService.error("❌ Failed to handle login event", e);
               }
               break;
 
@@ -93,15 +114,20 @@ class WebBridgeService {
               _ack('logout_ack', true);
               LoggerService.info("🚀 WebBridge: Handling logout event");
               try {
+                // 1. Update DB status before clearing local state
+                await SyncService.instance.updateSyncMeta(isLogin: false);
+
+                // 2. Clear background services and Storage
                 await CallLogService().onUserLogout();
-                await SyncService(
-                  Supabase.instance.client,
-                ).updateSyncMeta(isLogin: false);
+                
+                // 3. Clear local provider
+                final ctx = LoggerService.navKey.currentContext;
+                if (ctx != null && ctx.mounted) {
+                  ctx.read<SyncProvider>().logout();
+                }
+                LoggerService.info("✅ Logout Complete: Session cleared.");
               } catch (e) {
-                LoggerService.error(
-                  "❌ Failed to update sync_meta on logout",
-                  e,
-                );
+                LoggerService.error("❌ Failed to update sync_meta on logout", e);
               }
               break;
 
@@ -217,7 +243,8 @@ class WebBridgeService {
         await SyncService(
           Supabase.instance.client,
         ).updateSyncMeta(isLogin: true);
-        await CallLogService().onUserLogin();
+        
+        await CallLogService().onUserLogin(userMap);
       } catch (e) {
         LoggerService.warn("⚠️ Failed to update sync_meta on user sync: $e");
       }

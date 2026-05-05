@@ -2,12 +2,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:call_log/call_log.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:phone_state/phone_state.dart';
 
 import '../models/call_log_model.dart';
-import '../models/user_model.dart';
 import 'storage_service.dart';
 import '../utils/device_utils.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -15,7 +13,11 @@ import 'logger_service.dart';
 import 'sync_service.dart';
 import 'notification_service.dart';
 import 'webbridge_service.dart';
+import '../models/user_model.dart';
 import '../utils/phone_utils.dart';
+import 'background_service.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'dart:io';
 
 /// Internal state machine for call tracking
 enum CallTrackingState { idle, dialing, ringing, active }
@@ -38,7 +40,7 @@ class CallLogService {
     true,
   );
 
-  static const _nativeChannel = MethodChannel('com.example.crm3/overlay');
+  static const _nativeChannel = MethodChannel('com.example.crm3/main');
 
   static bool get isOnCallRealTime => callActiveNotifier.value;
   static String? get currentlyTrackedNumber => currentNumberNotifier.value;
@@ -50,10 +52,12 @@ class CallLogService {
     currentNumberNotifier.value = number;
     WebBridgeService.notifyCallStatus("connecting", number);
     final simId = StorageService.getDefaultSim();
+    final slotIndex = StorageService.getDefaultSimSlot();
     try {
       await _nativeChannel.invokeMethod('directCall', {
         'number': number,
         'simId': simId,
+        'slotIndex': slotIndex,
       });
     } catch (e) {
       LoggerService.error("❌ Failed to place direct call", e);
@@ -106,34 +110,58 @@ class CallLogService {
   Timer? _autoSyncTimer;
   Timer? _postCallDebounceTimer;
   bool _isUserLoggedIn = false;
+  bool _isScanInProgress = false; // 🚀 LOCK FOR SCANNING
 
   Future<void> initializeCallStateListener() async {
     if (kIsWeb) return;
     LoggerService.info('🚀 CallLogService: Initializing...');
 
-    // Initialize the Bridge
-    // SyncService.instance handles its own initialization logic.
+    // 1. Permission check pehle
+    final phoneGranted = await Permission.phone.isGranted;
+    final callLogGranted = await _checkCallLogPermission();
+    
+    if (!phoneGranted) {
+      LoggerService.warn('Phone permission denied — call detection disabled');
+      // App crash mat karo, sirf feature disable karo
+      _showPermissionRequiredDialog();
+      return;
+    }
+    
+    // Call log optional feature hai
+    if (!callLogGranted) {
+      LoggerService.warn('Call log permission denied — using live detection only');
+      // scanAndEnqueueNewCalls() skip karo, sirf live detection chalao
+    }
 
     await NotificationService.initialize();
     await _checkLoginStatus();
-
-    // 🛡️ Request Permissions for Direct Call/Disconnect
-    try {
-      if (await Permission.phone.request().isGranted) {
-        LoggerService.info('✅ Phone permission granted');
-      }
-      // Note: On some versions of permission_handler, callLog is used.
-      // If it fails to compile, we rely on the broader phone permission.
-    } catch (e) {
-      LoggerService.error('❌ Permission request failed', e);
-    }
-
     _hardResetSession("Initialization");
 
     // 🌉 Start listening to the Bridge
     _startBridgeListening();
     _startLiveSubscription();
     LoggerService.info('✅ CallLogService: Initialized');
+  }
+
+  Future<bool> _checkCallLogPermission() async {
+    try {
+      if (Platform.isAndroid) {
+        final info = await DeviceInfoPlugin().androidInfo;
+        if (info.version.sdkInt >= 29) {
+          // On Android 10+, READ_CALL_LOG is often required separately or bundled
+          // If permission_handler doesn't have a specific callLog, we use a custom check or ignore
+          return await Permission.phone.isGranted;
+        }
+      }
+      return await Permission.phone.isGranted;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _showPermissionRequiredDialog() {
+    // For background service, we just log. The UI should handle showing the dialog.
+    LoggerService.warn('⚠️ CRM Feature Restricted: Phone permissions are missing.');
   }
 
   void _startBridgeListening() {
@@ -164,31 +192,59 @@ class CallLogService {
   }
 
   Future<void> _checkLoginStatus() async {
-    final session = Supabase.instance.client.auth.currentSession;
-    _isUserLoggedIn = session != null;
+    final user = StorageService.getUser();
+    _isUserLoggedIn = user != null;
+    if (_isUserLoggedIn) {
+      startAutoSync();
+      // 🚀 Start command listener for existing session
+      SyncService.instance.startCommandListener();
+    }
   }
 
-  Future<void> onUserLogin() async {
+  Future<void> onUserLogin(Map<String, dynamic> payload) async {
     _isUserLoggedIn = true;
     _hardResetSession("Login");
+    
+    // 🛡️ Ensure central storage is updated
+    await StorageService.setUserSession(payload);
+    
+    // Start Background Service if not running
+    if (!kIsWeb) {
+      await BackgroundService.setup();
+    }
+    
+    await scanAndEnqueueNewCalls(); // Fetch all logs since app was last active
     startAutoSync();
+    
+    // Start Remote Command Listener
+    await SyncService.instance.startCommandListener();
   }
 
   Future<void> onUserLogout() async {
     _isUserLoggedIn = false;
     _stopAutoSync();
     _hardResetSession("Logout");
+    
+    // 🛡️ CENTRAL STORAGE: Clear everything
+    await StorageService.clearUserSession();
+
+    // Stop Background Service
+    if (!kIsWeb) {
+      await BackgroundService.stop();
+    }
+
+    // Stop Remote Command Listener
+    await SyncService.instance.stopCommandListener();
   }
 
   void _startLiveSubscription() {
     _liveCallSubscription?.cancel();
-    _liveCallSubscription = PhoneState.stream.listen(
-      (event) {
-        LoggerService.info('📡 Raw PhoneState Event: ${event.status} | Number: ${event.number}');
-        _handleCallEvent(event.status, event.number);
-      },
-      onError: (e) => LoggerService.error('❌ PhoneState Stream Error', e),
-    );
+    _liveCallSubscription = PhoneState.stream.listen((event) {
+      LoggerService.info(
+        '📡 Raw PhoneState Event: ${event.status} | Number: ${event.number}',
+      );
+      _handleCallEvent(event.status, event.number);
+    }, onError: (e) => LoggerService.error('❌ PhoneState Stream Error', e));
   }
 
   Future<void> _handleCallEvent(
@@ -246,9 +302,11 @@ class CallLogService {
     switch (status) {
       case PhoneStateStatus.CALL_INCOMING:
         _detectedCallType = 'incoming';
+        _lastSyncedNumber = null; // 🚀 FORCED RESET
         await _handleCallStart(finalNumber);
         break;
       case PhoneStateStatus.CALL_STARTED:
+        _lastSyncedNumber = null; // 🚀 FORCED RESET
         if (_state == CallTrackingState.idle) {
           _detectedCallType = 'outgoing';
           await _handleCallActive(finalNumber);
@@ -273,13 +331,11 @@ class CallLogService {
     _callStartTime = DateTime.now();
 
     // 🚀 INCOMING: Start sync/lookup now for Caller ID during Ringing
-    if (_currentNumber != null) {
-      LoggerService.info('📞 Notifying WebBridge: INCOMING -> $_currentNumber');
-      await _updateSyncMetaSafely(onCall: true, number: _currentNumber);
-      WebBridgeService.notifyCallStatus("connecting", _currentNumber);
-    }
+    LoggerService.info('📞 Notifying WebBridge: INCOMING -> ${_currentNumber ?? "Unknown"}');
+    await _updateSyncMetaSafely(onCall: true, number: _currentNumber);
+    WebBridgeService.notifyCallStatus("connecting", _currentNumber);
 
-    NotificationService.showCallNotification("📞 Incoming: $_currentNumber");
+    // NotificationService.showCallNotification("📞 Incoming: $_currentNumber");
   }
 
   Future<void> _handleCallActive(String? rawNumber) async {
@@ -294,7 +350,7 @@ class CallLogService {
     // Set start time for outgoing call if not already set during ringing
     _callStartTime ??= DateTime.now();
 
-    NotificationService.showCallActiveNotification();
+    // NotificationService.showCallActiveNotification();
 
     // 🚀 SYNC LOGIC:
     // - Incoming: Already synced in _handleCallStart, _updateSyncMetaSafely will skip.
@@ -320,47 +376,71 @@ class CallLogService {
         // 1. Wait briefly for system call log to update
         await Future.delayed(const Duration(seconds: 2));
 
-        // 2. Fetch actual talktime from system logs
+        final now = DateTime.now();
+        DateTime finalTimestamp = now;
+        
+        // 2. Fetch actual talktime, TRUE start time, and Type from system logs
         int actualDuration = 0;
+        String? finalType = _detectedCallType;
+        
         try {
           final Iterable<CallLogEntry> entries = await CallLog.query(
             number: _currentNumber,
           );
           if (entries.isNotEmpty) {
-            // Take the most recent entry for this number
-            actualDuration = entries.first.duration ?? 0;
+            final entry = entries.first;
+            actualDuration = entry.duration ?? 0;
+            if (entry.timestamp != null) {
+              finalTimestamp = DateTime.fromMillisecondsSinceEpoch(entry.timestamp!);
+            }
+            
+            // 🛰️ Recover Call Type from System Log
+            if (entry.callType != null) {
+               final rawTypeStr = entry.callType.toString().split('.').last.toLowerCase();
+               if (rawTypeStr.contains('incoming')) {
+                 finalType = 'incoming';
+               } else if (rawTypeStr.contains('outgoing')) {
+                 finalType = 'outgoing';
+               } else if (rawTypeStr.contains('missed') || rawTypeStr.contains('rejected') || rawTypeStr.contains('declined')) {
+                 finalType = 'missed';
+               } else {
+                 finalType = rawTypeStr;
+               }
+            }
+
             LoggerService.info(
-              '✅ Actual Talktime from System Log: $actualDuration seconds',
+              '✅ System Log Match: Duration $actualDuration, StartTime $finalTimestamp, Type $finalType',
             );
           } else {
-            // Fallback to time-based calculation if log is missing
             actualDuration = _callStartTime != null
-                ? DateTime.now().difference(_callStartTime!).inSeconds
+                ? now.difference(_callStartTime!).inSeconds
                 : 0;
+            finalTimestamp = _callStartTime ?? now;
             LoggerService.warn(
-              '⚠️ Call log not found. Falling back to estimated duration: $actualDuration',
+              '⚠️ Call log not found. Using estimated duration/time.',
             );
           }
         } catch (e) {
           LoggerService.error('❌ Failed to query system call log', e);
           actualDuration = _callStartTime != null
-              ? DateTime.now().difference(_callStartTime!).inSeconds
+              ? now.difference(_callStartTime!).inSeconds
               : 0;
+          finalTimestamp = _callStartTime ?? now;
         }
 
-        final now = DateTime.now();
-
-        // 🚀 BRIDGE CALL: Messenger sends the signal with actual duration
-        await _syncSvc.logManualCall(
+        // 🚀 BRIDGE CALL: Use the unified data to prevent duplicates and unknown types
+        _syncSvc.logManualCall(
           number: _currentNumber!,
-          callType: _detectedCallType ?? 'unknown',
+          callType: finalType ?? 'unknown',
           duration: actualDuration,
-          timestamp: now,
-        );
+          timestamp: finalTimestamp,
+        ).catchError((e) => LoggerService.error('❌ Background logManualCall failed', e));
+        
+        // Use debouncer instead of direct sync
+        _syncSvc.scheduleSyncDebounced();
       }
       await _updateSyncMetaSafely(onCall: false);
-      NotificationService.showCallEndedNotification();
-      _schedulePostCallEnrichment();
+      // NotificationService.showCallEndedNotification();
 
       // Notify WebApp that the call ended
       LoggerService.info(
@@ -399,16 +479,24 @@ class CallLogService {
 
       // 🌉 COMMAND-DRIVEN OVERLAY:
       // Background isolate finishes lookup and THEN tells native to show the overlay.
-      if (onCall && result != null) {
+      if (onCall) {
         try {
-          // If it's a start of a call, use 'showOverlayWithData' to trigger display
-          // If it was already on, this will just update the data.
+          if (!await Permission.systemAlertWindow.isGranted) return;
+          
+          // Use result if available, otherwise show a generic loading overlay
+          final Map<String, dynamic> overlayData = result ?? {
+            'number': number ?? _currentNumber ?? "Unknown",
+            'name': "Searching...",
+            'isPersonal': true,
+            'status': _detectedCallType ?? "Active",
+          };
+
           await _nativeChannel.invokeMethod(
             'showOverlayWithData',
-            Map<String, dynamic>.from(result),
+            Map<String, dynamic>.from(overlayData),
           );
           LoggerService.info(
-            '🚀 Command sent: showOverlayWithData _from_background',
+            '🚀 Command sent: showOverlayWithData (Force Trigger)',
           );
         } catch (e) {
           LoggerService.error('❌ Failed to trigger overlay display', e);
@@ -434,143 +522,26 @@ class CallLogService {
   }
 
   // --- SYNC METHODS ---
-  void startAutoSync({Duration interval = const Duration(minutes: 15)}) {
+  void startAutoSync({Duration interval = const Duration(minutes: 30)}) {
     if (!_isUserLoggedIn) return;
     _autoSyncTimer?.cancel();
-    _autoSyncTimer = Timer.periodic(interval, (timer) {
-      if (_state == CallTrackingState.idle) performBackgroundSync(isAuto: true);
+     _autoSyncTimer = Timer.periodic(interval, (timer) {
+      if (_state == CallTrackingState.idle) {
+        scanAndEnqueueNewCalls();
+        // Direct sync mat karo — debouncer handle karega
+      }
     });
-    performBackgroundSync(isAuto: true);
+    // Startup pe ek baar
+    scanAndEnqueueNewCalls();
   }
 
   void _stopAutoSync() => _autoSyncTimer?.cancel();
 
-  void _schedulePostCallEnrichment() {
-    _postCallDebounceTimer?.cancel();
-    _postCallDebounceTimer = Timer(const Duration(minutes: 1), () {
-      if (_state == CallTrackingState.idle && _isUserLoggedIn) {
-        performBackgroundSync(isAuto: true, enrichFromSystemLogs: true);
-      }
-    });
-  }
-
-  static Future<void> performBackgroundSync({
-    bool isAuto = false,
-    bool enrichFromSystemLogs = false,
-  }) async {
+  static Future<void> performBackgroundSync({bool isAuto = false}) async {
     try {
-      if (enrichFromSystemLogs && !kIsWeb) {
-        await _instance.scanAndEnqueueNewCalls();
-      }
-      await _instance._syncSvc.syncPending();
+      _instance._syncSvc.scheduleSyncDebounced(delay: Duration.zero);
     } catch (e) {
       LoggerService.error('❌ Sync failed', e);
-    }
-  }
-
-  Future<int> scanAndEnqueueNewCalls({DateTime? dateFrom}) async {
-    if (kIsWeb) return 0;
-    try {
-      final currentDeviceId = await DeviceUtils.getDeviceId();
-      final userMap = StorageService.getUser();
-      final empId = userMap != null
-          ? UserModel.fromJson(userMap).employeeId
-          : null;
-
-      // 1. Check Supabase for last sync info to avoid redundant scanning
-      DateTime? cutoff;
-      String? lastSyncedCallId;
-      final deviceSync = await _syncSvc.getDeviceSync(currentDeviceId);
-
-      if (deviceSync != null && deviceSync['call_at'] != null) {
-        cutoff = DateTime.parse(deviceSync['call_at']).toLocal();
-        lastSyncedCallId = deviceSync['last_sync_call'];
-        LoggerService.info(
-          '⏳ device_sync found. Cutoff: $cutoff, Last ID: $lastSyncedCallId',
-        );
-      } else {
-        // 🚀 FIRST TIME SYNC: Use 24-hour fallback as requested
-        cutoff = dateFrom ?? DateTime.now().subtract(const Duration(hours: 24));
-        LoggerService.info(
-          '⏳ First-time sync (No record): Fetching calls from last 24 hours ($cutoff)',
-        );
-      }
-
-      final entries = await CallLog.get();
-      final filtered = entries.where((e) {
-        final ts = DateTime.fromMillisecondsSinceEpoch(e.timestamp ?? 0);
-        final normalizedNum = PhoneUtils.normalize(e.number);
-        final id = '${normalizedNum}_${ts.millisecondsSinceEpoch}';
-
-        // Skip if call is strictly older than cutoff
-        if (ts.isBefore(cutoff!)) return false;
-
-        // 🛡️ SMART CHECK: Even if time is same, skip if ID matches exactly
-        if (id == lastSyncedCallId) return false;
-
-        return true;
-      }).toList();
-
-      if (filtered.isEmpty) {
-        LoggerService.info('✅ No new calls found since last sync');
-        return 0;
-      }
-
-      // Sort by timestamp to process oldest to newest
-      filtered.sort((a, b) => (a.timestamp ?? 0).compareTo(b.timestamp ?? 0));
-
-      int added = 0;
-      DateTime? latestCallTime;
-      String? latestCallId;
-
-      for (final e in filtered) {
-        final ts = DateTime.fromMillisecondsSinceEpoch(e.timestamp ?? 0);
-        final normalizedNum = PhoneUtils.normalize(e.number);
-        final id = '${normalizedNum}_${ts.millisecondsSinceEpoch}';
-
-        if (StorageService.syncedBucket.get(id) == null &&
-            StorageService.callBucket.get(id) == null) {
-          final model = CallLogModel(
-            id: id,
-            number: PhoneUtils.normalize(e.number),
-            name: e.name,
-            callType: _mapType(e.callType),
-            duration: e.duration ?? 0,
-            timestamp: ts.toUtc(),
-            deviceId: currentDeviceId,
-            employeeId: empId,
-          );
-
-          StorageService.callBucket.put(id, {
-            'model': model.toJson(),
-            'status': 'pending',
-          });
-          added++;
-
-          if (latestCallTime == null || ts.isAfter(latestCallTime)) {
-            latestCallTime = ts;
-            latestCallId = id;
-          }
-        }
-      }
-
-      // 2. Update device_sync in Supabase with the latest call metadata
-      // This is still needed here because scanAndEnqueueNewCalls handles multiple calls,
-      // not just one live call.
-      if (latestCallTime != null && latestCallId != null) {
-        await _syncSvc.setDeviceSync(
-          deviceId: currentDeviceId,
-          lastSyncCall: latestCallId,
-          callAt: latestCallTime,
-        );
-      }
-
-      await updateLastSync(DateTime.now().millisecondsSinceEpoch.toString());
-      LoggerService.info('✅ Scan complete: $added new calls enqueued for sync');
-      return added;
-    } catch (e) {
-      LoggerService.error('❌ Scan failed during system log iteration', e);
-      return 0;
     }
   }
 
@@ -595,19 +566,15 @@ class CallLogService {
     await prefs.setBool(_firstSyncKey, true);
   }
 
-  String _mapType(CallType? t) {
-    if (t == CallType.incoming) return 'incoming';
-    if (t == CallType.outgoing) return 'outgoing';
-    if (t == CallType.missed) return 'missed';
-    return 'unknown';
-  }
-
   Future<bool> sendFakeData() async {
     if (kIsWeb) return false;
     try {
       final currentDeviceId = await DeviceUtils.getDeviceId();
       final ts = DateTime.now().subtract(const Duration(minutes: 5));
       final id = 'fake_${ts.millisecondsSinceEpoch}';
+
+      final userMap = StorageService.getUser();
+      final user = userMap != null ? UserModel.fromJson(userMap) : null;
 
       final model = CallLogModel(
         id: id,
@@ -617,7 +584,10 @@ class CallLogService {
         duration: 45,
         timestamp: ts.toUtc(),
         deviceId: currentDeviceId,
-        employeeId: 'fake_emp',
+        employeeId: user?.employeeId ?? 'fake_emp',
+        userName: user?.userName ?? 'Fake User',
+        organizationId: user?.organizationId ?? 'fake_org',
+        idx: id,
       );
 
       await StorageService.callBucket.put(id, {
@@ -649,7 +619,13 @@ class CallLogService {
   }) async {
     if (kIsWeb) return;
     try {
-      // We use our custom native overlay instead of the     package
+      // 🛡️ CHECK PERMISSION BEFORE SHOWING
+      if (!await Permission.systemAlertWindow.isGranted) {
+        LoggerService.info('🪟 Overlay skipped: Permission not granted');
+        return;
+      }
+
+      // We use our custom native overlay instead of the package
       // to have better control over height and interaction.
       await _nativeChannel.invokeMethod('showOverlayWithData', {
         'number': number,
@@ -670,6 +646,167 @@ class CallLogService {
       }
     } catch (e) {
       LoggerService.error('Error closing overlay', e);
+    }
+  }
+
+  /// Scans all system call logs and enqueues unsynced ones in a non-blocking way
+  Future<void> scanAndEnqueueNewCalls() async {
+    if (!_isUserLoggedIn) return;
+    if (_isScanInProgress) return; // 🚀 Double scan prevent
+    _isScanInProgress = true;
+
+    try {
+      // 🛡️ Permission Check
+      if (!await Permission.phone.isGranted) {
+        LoggerService.warn('🔍 Scan skipped: Permission denied');
+        return;
+      }
+      
+      LoggerService.info('🔍 CallLogService: Triggering background scan...');
+
+      // ✅ FIX: Await this delayed future correctly
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      var lastScanned = StorageService.getLastScannedAt();
+      if (lastScanned == null) {
+        final nowTs = DateTime.now().millisecondsSinceEpoch;
+        LoggerService.info('🆕 Fresh Install. Setting pointer to $nowTs');
+        await StorageService.setLastScannedAt(nowTs);
+        return;
+      }
+
+      final allEntries = await CallLog.query(dateFrom: lastScanned);
+      final entries = allEntries.toList().reversed.take(50).toList();
+      if (entries.isEmpty) return;
+
+      final deviceId = await DeviceUtils.getDeviceId();
+      final userMap = StorageService.getUser();
+      final user = userMap != null ? UserModel.fromJson(userMap) : null;
+
+      int enqueued = 0;
+      int maxTs = lastScanned;
+
+      for (var entry in entries) {
+        if (enqueued % 10 == 0) {
+          await Future.delayed(const Duration(milliseconds: 5));
+        }
+
+        final number = entry.number ?? '';
+        final timestamp = entry.timestamp ?? 0;
+        final duration = entry.duration ?? 0;
+        if (number.isEmpty) continue;
+
+        final cleanNumber = PhoneUtils.normalize(number);
+        final id = '${cleanNumber}_${timestamp}_$duration';
+
+        if (StorageService.syncedBucket.containsKey(id) ||
+            StorageService.callBucket.containsKey(id)) {
+          continue;
+        }
+
+        final model = CallLogModel(
+          id: id,
+          number: cleanNumber,
+          callType: _mapCallType(entry.callType),
+          duration: duration,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(timestamp).toUtc(),
+          deviceId: deviceId,
+          employeeId: user?.employeeId ?? 'unknown',
+          userName: user?.userName,
+          organizationId: user?.organizationId,
+          isPersonal: true, // Default true, sync_service will classify properly
+          idx: id,
+        );
+
+        await StorageService.callBucket.put(id, {
+          'model': model.toJson(),
+          'status': 'pending',
+          'attempts': 0,
+        });
+        enqueued++;
+        if (timestamp > maxTs) maxTs = timestamp;
+      }
+
+      if (enqueued > 0) {
+        await StorageService.setLastScannedAt(maxTs);
+        LoggerService.info('✅ Scan enqueued $enqueued calls');
+        _syncSvc.scheduleSyncDebounced(delay: const Duration(seconds: 5));
+      }
+    } catch (e) {
+      LoggerService.error('Scan failed', e);
+    } finally {
+      _isScanInProgress = false;
+    }
+  }
+
+  String _mapCallType(dynamic rawType) {
+    if (rawType == null) return 'unknown';
+    final typeStr = rawType.toString().split('.').last.toLowerCase();
+    if (typeStr.contains('incoming')) return 'incoming';
+    if (typeStr.contains('outgoing')) return 'outgoing';
+    if (typeStr.contains('missed') || typeStr.contains('rejected')) return 'missed';
+    if (typeStr.contains('blocked')) return 'blocked';
+    return typeStr;
+  }
+
+  /// Specialized method to enqueue specific logs (used by UI triggers)
+  Future<void> enqueueUntrackedLogs(List<CallLogEntry> logs) async {
+    if (!_isUserLoggedIn) return;
+    
+    int enqueued = 0;
+    final deviceId = await DeviceUtils.getDeviceId();
+    final userMap = StorageService.getUser();
+    final user = userMap != null ? UserModel.fromJson(userMap) : null;
+
+    for (var entry in logs) {
+      final number = entry.number ?? '';
+      final timestamp = entry.timestamp ?? 0;
+      final duration = entry.duration ?? 0;
+      if (number.isEmpty) continue;
+
+      final cleanNumber = PhoneUtils.normalize(number);
+      final id = '${cleanNumber}_${timestamp}_$duration';
+
+      if (!StorageService.syncedBucket.containsKey(id) && !StorageService.callBucket.containsKey(id)) {
+        // 🛰️ CALL TYPE MAPPING (Handling WiFi and Special OS Types)
+        String cType = 'unknown';
+        final rawType = entry.callType;
+        if (rawType != null) {
+          cType = rawType.toString().split('.').last.toLowerCase();
+          if (cType == 'wifi_incoming' || cType.contains('wifi')) {
+            cType = 'incoming';
+          } else if (cType == 'wifi_outgoing') {
+            cType = 'outgoing';
+          }
+        }
+
+        final model = CallLogModel(
+          id: id,
+          number: cleanNumber,
+          name: entry.name,
+          callType: cType,
+          duration: duration,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(timestamp).toUtc(),
+          deviceId: deviceId,
+          employeeId: user?.employeeId ?? 'unknown',
+          userName: user?.userName,
+          organizationId: user?.organizationId,
+          isPersonal: await _syncSvc.isNumberPersonal(cleanNumber),
+          idx: id,
+        );
+
+        await StorageService.callBucket.put(id, {
+          'model': model.toJson(),
+          'status': 'pending',
+          'attempts': 0,
+        });
+        enqueued++;
+      }
+    }
+
+    if (enqueued > 0) {
+      LoggerService.info('✅ CallLogPage trigger enqueued $enqueued untracked calls');
+      SyncService.instance.syncPending();
     }
   }
 }

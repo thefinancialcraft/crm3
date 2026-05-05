@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers/sync_provider.dart';
-import '../services/logger_service.dart';
 import '../services/sync_service.dart';
 import '../services/storage_service.dart';
 import '../services/call_log_service.dart';
@@ -48,7 +47,6 @@ class _ManualControlsState extends State<ManualControls> {
             setState(() => _isSyncing = true);
             sync.setSyncing(true);
             try {
-              await CallLogService().scanAndEnqueueNewCalls();
               final svc = SyncService(Supabase.instance.client, onProgress: (p, s) {
                 sync.setCounts(pending: p, synced: s);
                 sync.setLastSync(DateTime.now());
