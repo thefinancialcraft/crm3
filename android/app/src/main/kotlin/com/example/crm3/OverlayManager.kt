@@ -172,7 +172,7 @@ class OverlayManager private constructor(private val context: Context) {
             rootLayout?.addView(flutterView, flutterParams)
             
             layoutParams = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
+                displayMetrics.widthPixels, // 🚀 Changed from MATCH_PARENT to enable X movement
                 (200 * displayMetrics.density).toInt(),
 
                 // Correct type — version wise
@@ -193,8 +193,9 @@ class OverlayManager private constructor(private val context: Context) {
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.RGBA_8888
             ).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                y = 150
+                gravity = Gravity.CENTER
+                x = 0
+                y = -200
                 dimAmount = 0.0f
             }
 
@@ -252,13 +253,43 @@ class OverlayManager private constructor(private val context: Context) {
                         if (isDragging) {
                             val totalDx = abs(event.rawX - initialTouchX)
                             if (totalDx > dismissThreshold) {
-                                hideOverlay()
-                            } else {
-                                // Snap back to center horizontally
-                                this@OverlayManager.layoutParams?.let {
-                                    it.x = 0
-                                    try { windowManager?.updateViewLayout(this, it) } catch (e: Exception) {}
+                                // 🚀 Smooth Slide Out Animation (Dismiss)
+                                val startX = this@OverlayManager.layoutParams?.x ?: 0
+                                val targetX = if (event.rawX > initialTouchX) displayMetrics.widthPixels else -displayMetrics.widthPixels
+                                
+                                val dismissAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f)
+                                dismissAnimator.duration = 250
+                                dismissAnimator.addUpdateListener { animation ->
+                                    val fraction = animation.animatedValue as Float
+                                    this@OverlayManager.layoutParams?.let { lp ->
+                                        lp.x = (startX + (targetX - startX) * fraction).toInt()
+                                        try { windowManager?.updateViewLayout(this, lp) } catch (e: Exception) {}
+                                    }
                                 }
+                                dismissAnimator.addListener(object : android.animation.AnimatorListenerAdapter() {
+                                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                                        hideOverlay()
+                                    }
+                                })
+                                dismissAnimator.start()
+                            } else {
+                                // 🚀 Springy Snap Back Animation
+                                val startX = this@OverlayManager.layoutParams?.x ?: 0
+                                val startY = this@OverlayManager.layoutParams?.y ?: 0
+                                
+                                val snapAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f)
+                                snapAnimator.duration = 400
+                                // 🚀 Higher tension for a more "jumpy" Truecaller-like feel
+                                snapAnimator.interpolator = android.view.animation.OvershootInterpolator(1.8f)
+                                snapAnimator.addUpdateListener { animation ->
+                                    val fraction = animation.animatedValue as Float
+                                    this@OverlayManager.layoutParams?.let { lp ->
+                                        lp.x = (startX + (0 - startX) * fraction).toInt()
+                                        lp.y = (startY + (-200 - startY) * fraction).toInt()
+                                        try { windowManager?.updateViewLayout(this, lp) } catch (e: Exception) {}
+                                    }
+                                }
+                                snapAnimator.start()
                             }
                             isDragging = false
                             return true

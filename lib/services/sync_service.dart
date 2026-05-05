@@ -465,6 +465,7 @@ class SyncService {
       if (custResp.isNotEmpty) {
         LoggerService.info('✅ Sync: Found match in CUSTOMERS table');
         final match = custResp.first;
+        match['status'] ??= 'Active'; // 🚀 Default for customers
         _customerCache[normalized] = match;
         _customerCacheTime[normalized] = DateTime.now();
         return match;
@@ -486,6 +487,7 @@ class SyncService {
       if (rejResp.isNotEmpty) {
         LoggerService.info('✅ Sync: Found match in REJECTED_LEADS table');
         final match = rejResp.first;
+        match['status'] ??= 'Rejected'; // 🚀 Default for rejected_leads
         _customerCache[normalized] = match;
         _customerCacheTime[normalized] = DateTime.now();
         return match;
@@ -507,6 +509,7 @@ class SyncService {
       if (closedResp.isNotEmpty) {
         LoggerService.info('✅ Sync: Found match in CLOSED_DEALS table');
         final match = closedResp.first;
+        match['status'] ??= 'Closed'; // 🚀 Default for closed_deals
         _customerCache[normalized] = match;
         _customerCacheTime[normalized] = DateTime.now();
         return match;
