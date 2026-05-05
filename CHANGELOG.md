@@ -1,5 +1,13 @@
 ﻿# Project Changelog
 
+## [2026-05-06 03:14]
+- card now fully working -- issue only customer details are not visible
+
+
+## [2026-05-06 02:46]
+- now card is working fine without blocking screen card sliding estlished working also fine
+
+
 ## [2026-05-06 02:06]
 - card jump back effect
 
@@ -17,6 +25,8 @@ avi yha do isuee hai
 
 ## [2026-05-05 23:57]
 - save first backup 1. app at this time fine working with bubble and display card only one issue customer details are not updating
+
+
 
 
 

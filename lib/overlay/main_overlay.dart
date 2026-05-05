@@ -80,7 +80,7 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
     // --- Initialize Bubble Animation ---
     _bubbleController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 800), // 🚀 Faster expansion/shrink
     );
 
     _scaleAnimation = CurvedAnimation(
@@ -406,10 +406,10 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
         },
       );
       
-      // 🛡️ ENFORCE 4-SECOND BUBBLE VISIBILITY
+      // 🛡️ ENFORCE 2.5-SECOND BUBBLE VISIBILITY
       final elapsed = DateTime.now().difference(startTime);
-      if (elapsed.inMilliseconds < 4000) {
-        final waitTime = 4000 - elapsed.inMilliseconds;
+      if (elapsed.inMilliseconds < 2500) {
+        final waitTime = 2500 - elapsed.inMilliseconds;
         debugPrint("[OverlayLookup] Enforcing bubble for another ${waitTime}ms");
         await Future.delayed(Duration(milliseconds: waitTime));
       }
@@ -682,17 +682,12 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
                                       ),
                                     ),
                                   ],
-                                  if (isPersonal)
-                                    const Center(
-                                      child: Padding(
-                                        padding: EdgeInsets.symmetric(vertical: 10),
-                                        child: Text(
-                                          "No CRM records found for this number.",
-                                          style: TextStyle(
-                                              color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic),
-                                        ),
-                                      ),
-                                    ),
+                                  if (status.toLowerCase() == 'rejected')
+                                    _buildFooterMessage("This is a rejected lead or Not Interested", const Color(0xFFD32F2F)),
+                                  if (status.toLowerCase() == 'closed')
+                                    _buildFooterMessage("This lead is already closed", const Color(0xFF4B33E8)),
+                                  if (isPersonal && status.toLowerCase() != 'rejected' && status.toLowerCase() != 'closed')
+                                    _buildFooterMessage("No CRM records found for this number.", Colors.grey),
                                 ],
                               ),
                             ),
@@ -704,6 +699,24 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFooterMessage(String message, Color color) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: color,
+            fontSize: 14, // 🚀 Increased size
+            fontWeight: FontWeight.w600,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ),
     );
   }
 

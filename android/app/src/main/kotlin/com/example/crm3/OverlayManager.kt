@@ -277,7 +277,7 @@ class OverlayManager private constructor(private val context: Context) {
                                 }
                                 dismissAnimator.addListener(object : android.animation.AnimatorListenerAdapter() {
                                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                                        hideOverlay()
+                                        performHide()
                                     }
                                 })
                                 dismissAnimator.start()
@@ -312,15 +312,40 @@ class OverlayManager private constructor(private val context: Context) {
 
     fun hideOverlay() {
         if (!isOverlayShown) return
+        
+        val startX = layoutParams?.x ?: 0
+        val displayMetrics = context.resources.displayMetrics
+        val targetX = displayMetrics.widthPixels // 🚀 Always slide out to the RIGHT
+        
+        val exitAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f)
+        exitAnimator.duration = 300
+        exitAnimator.addUpdateListener { animation ->
+            val fraction = animation.animatedValue as Float
+            layoutParams?.let { lp ->
+                lp.x = (startX + (targetX - startX) * fraction).toInt()
+                try { windowManager?.updateViewLayout(rootLayout, lp) } catch (e: Exception) {}
+            }
+        }
+        exitAnimator.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                performHide()
+            }
+        })
+        exitAnimator.start()
+    }
+
+    private fun performHide() {
         try {
             methodChannel?.invokeMethod("clearData", null)
-            windowManager?.removeView(rootLayout)
+            if (rootLayout != null && rootLayout?.isAttachedToWindow == true) {
+                windowManager?.removeView(rootLayout)
+            }
             flutterView?.detachFromFlutterEngine()
             flutterView = null
             rootLayout = null
             isOverlayShown = false
         } catch (e: Exception) {
-            Log.e("OverlayManager", "Error hiding overlay", e)
+            Log.e("OverlayManager", "Error in performHide", e)
         }
     }
 
