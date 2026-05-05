@@ -190,7 +190,8 @@ class OverlayManager private constructor(private val context: Context) {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.RGBA_8888
             ).apply {
                 gravity = Gravity.CENTER
@@ -215,6 +216,7 @@ class OverlayManager private constructor(private val context: Context) {
             private var initialX = 0; private var initialY = 0
             private var initialTouchX = 0f; private var initialTouchY = 0f
             private var isDragging = false
+            private var isVerticalDrag = false // 🚀 Flag to lock axis
             private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
             private val dismissThreshold = displayMetrics.widthPixels * 0.45f
 
@@ -226,12 +228,14 @@ class OverlayManager private constructor(private val context: Context) {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isDragging = false
+                        isVerticalDrag = false // 🚀 Reset on new touch
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = abs(event.rawX - initialTouchX)
                         val dy = abs(event.rawY - initialTouchY)
                         if (dx > touchSlop || dy > touchSlop) {
                             isDragging = true
+                            isVerticalDrag = dy > dx // 🚀 Determine axis on start
                             return true
                         }
                     }
@@ -243,8 +247,13 @@ class OverlayManager private constructor(private val context: Context) {
                 when (event.action) {
                     MotionEvent.ACTION_MOVE -> {
                         this@OverlayManager.layoutParams?.let {
-                            it.x = initialX + (event.rawX - initialTouchX).toInt()
-                            it.y = initialY + (event.rawY - initialTouchY).toInt()
+                            if (isVerticalDrag) {
+                                // 🚀 Vertical move only
+                                it.y = initialY + (event.rawY - initialTouchY).toInt()
+                            } else {
+                                // 🚀 Horizontal move only
+                                it.x = initialX + (event.rawX - initialTouchX).toInt()
+                            }
                             try { windowManager?.updateViewLayout(this, it) } catch (e: Exception) {}
                         }
                         return true

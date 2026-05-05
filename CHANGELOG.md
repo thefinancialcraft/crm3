@@ -1,5 +1,9 @@
 ﻿# Project Changelog
 
+## [2026-05-06 02:06]
+- card jump back effect
+
+
 ## [2026-05-06 01:39]
 - Overlay Card Updated with diff colour acc to customer status / personal status
 
@@ -13,6 +17,7 @@ avi yha do isuee hai
 
 ## [2026-05-05 23:57]
 - save first backup 1. app at this time fine working with bubble and display card only one issue customer details are not updating
+
 
 
 
