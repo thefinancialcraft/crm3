@@ -45,7 +45,7 @@ class _ConsentPageState extends State<ConsentPage> {
                       child: Column(
                         children: [
                           Image.asset(
-                            'assets/app_icon.png', // updated logo path
+                            'assets/images/logo.jpeg',
                             height: 60,
                           ),
                           const SizedBox(height: 12),
