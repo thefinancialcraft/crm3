@@ -4,6 +4,7 @@
 //         CI/CD path issue, AGP 7.2+ compatibility
 // ============================================================
 
+
 allprojects {
     repositories {
         google()
@@ -23,11 +24,7 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
-// FIX #3 (Gradle): evaluationDependsOn circular dependency ka risk tha.
-// Sirf :app ke liye lagao, baaki subprojects ke liye nahi.
-project(":app") {
-    evaluationDependsOn(":app")
-}
+evaluationDependsOn(":app")
 
 // ============================================================
 //  FIX #1 + #2 (Gradle): Namespace auto-assignment

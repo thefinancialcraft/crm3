@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import '../services/consent_service.dart';
 import 'sim_selection_page.dart';
 
 class PermissionsPage extends StatefulWidget {
@@ -236,7 +235,6 @@ class _PermissionsPageState extends State<PermissionsPage>
                 child: ElevatedButton(
                   onPressed: _allPermissionsGranted
                       ? () async {
-                          await ConsentService.markOnboardingComplete();
                           if (!context.mounted) return;
                           Navigator.of(context).pushReplacement(
                             MaterialPageRoute(

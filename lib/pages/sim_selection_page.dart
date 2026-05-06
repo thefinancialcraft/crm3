@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'package:provider/provider.dart';
 import '../providers/sync_provider.dart';
-import '../app.dart';
+import 'inapp_webview_page.dart';
+import '../widgets/connection_wrapper.dart';
+import '../services/consent_service.dart';
 
 class SimSelectionPage extends StatefulWidget {
   final bool isFromSettings;
@@ -55,12 +57,21 @@ class _SimSelectionPageState extends State<SimSelectionPage> {
     final syncProvider = context.read<SyncProvider>();
     await syncProvider.setDefaultSim(_selectedSimId, _selectedSlotIndex);
 
+    // 🛡️ Mark onboarding as finished so ConsentPage doesn't reappear
+    await ConsentService.markOnboardingComplete();
+
     if (mounted) {
       if (widget.isFromSettings) {
         Navigator.pop(context);
       } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const App()),
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => Material(
+              color: Colors.white,
+              child: ConnectionWrapper(child: const InAppWebViewPage()),
+            ),
+          ),
+          (route) => false,
         );
       }
     }

@@ -69,6 +69,7 @@ class MainActivity: FlutterActivity() {
                     ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
                 }
 
+                // Note: On Android 10+, READ_PHONE_STATE + LOCATION is often required
                 if (hasPhoneState) {
                     val activeSubscriptionInfoList = subscriptionManager.activeSubscriptionInfoList
                     if (activeSubscriptionInfoList != null) {
@@ -95,6 +96,25 @@ class MainActivity: FlutterActivity() {
                         }
                     }
                 }
+
+                // Fallback for some devices: If simList is still empty, try to get from TelecomManager
+                if (simList.isEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as android.telecom.TelecomManager
+                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+                        val callAccounts = telecomManager.callCapablePhoneAccounts
+                        for (handle in callAccounts) {
+                            val account = telecomManager.getPhoneAccount(handle)
+                            val simInfo = mutableMapOf<String, Any>()
+                            // We use a hashed version of handle as ID if subscription is not available
+                            simInfo["id"] = handle.id ?: handle.hashCode().toString()
+                            simInfo["label"] = account?.label?.toString() ?: "SIM Account"
+                            simInfo["slotIndex"] = simList.size
+                            simInfo["mcc"] = ""
+                            simInfo["mnc"] = ""
+                            simList.add(simInfo)
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to get SIM cards: ${e.message}")
             }
@@ -108,17 +128,53 @@ class MainActivity: FlutterActivity() {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
                 if (simId != null && simId.isNotEmpty()) {
-                    val extras = Bundle()
-                    extras.putInt("subscription", simId.toInt())
-                    extras.putInt("android.telecom.extra.PHONE_ACCOUNT_HANDLE", simId.toInt())
-                    intent.putExtras(extras)
+                    val subscriptionId = simId.toIntOrNull()
                     
-                    // Various OEM keys for SIM selection
+                    if (subscriptionId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as android.telecom.TelecomManager
+                        val phoneAccountHandles = telecomManager.callCapablePhoneAccounts
+                        
+                        var targetHandle: android.telecom.PhoneAccountHandle? = null
+                        
+                        // Try to find the handle that matches the subscription ID
+                        for (handle in phoneAccountHandles) {
+                            if (handle.id == simId || handle.id.contains(simId)) {
+                                targetHandle = handle
+                                break
+                            }
+                        }
+                        
+                        // Fallback: If no exact ID match, try using the slot index if provided
+                        if (targetHandle == null && slotIndex != null && slotIndex < phoneAccountHandles.size) {
+                             // This is risky but sometimes works on OEMs where ID != subId
+                             // Better to use TelecomManager standard way if possible
+                        }
+
+                        if (targetHandle != null) {
+                            intent.putExtra(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, targetHandle)
+                        } else {
+                            // Last resort: standard extras
+                            intent.putExtra("subscription", subscriptionId)
+                        }
+                    } else if (subscriptionId != null) {
+                        intent.putExtra("subscription", subscriptionId)
+                    }
+
+                    // Common OEM extras for SIM selection (Xiaomi, Samsung, Oppo, Huawei)
                     intent.putExtra("com.android.phone.force.slot", true)
-                    intent.putExtra("Cdma_Phone_Number", number)
+                    intent.putExtra("com.android.phone.extra.slot", slotIndex ?: 0)
                     intent.putExtra("simSlot", slotIndex ?: 0)
-                    intent.putExtra("subscription", simId.toInt())
+                    intent.putExtra("slot_id", slotIndex ?: 0)
+                    intent.putExtra("simId", slotIndex ?: 0)
+                    intent.putExtra("subscription", subscriptionId ?: 0)
+                    
+                    // Dual SIM extras for some older devices
+                    val dualSimExtras = Bundle()
+                    dualSimExtras.putInt("subscription", subscriptionId ?: 0)
+                    dualSimExtras.putInt("phone", slotIndex ?: 0)
+                    intent.putExtras(dualSimExtras)
                 }
+                
                 context.startActivity(intent)
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to make call: ${e.message}")

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -10,6 +12,7 @@ import '../constants.dart';
 import 'logger_service.dart';
 import 'storage_service.dart';
 
+@pragma('vm:entry-point')
 class BackgroundService {
   static const notificationChannelId = 'call_log_sync_channel';
   static const notificationId = 1001;
@@ -121,6 +124,23 @@ class BackgroundService {
     try {
       await StorageService.init();
       LoggerService.info('StorageService initialized in background');
+      
+      // 🔄 Sync user session from SharedPreferences to Hive for cross-isolate reliability
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final bgUserInfo = prefs.getString('bg_user_info');
+        if (bgUserInfo != null) {
+          final Map<String, dynamic> payload = jsonDecode(bgUserInfo);
+          await StorageService.meta.put('userInfo', payload);
+          await StorageService.meta.put('isLoggedIn', prefs.getBool('bg_is_logged_in') ?? true);
+          if (payload['organization_id'] != null) {
+            await StorageService.meta.put('lastOrgId', payload['organization_id']);
+          }
+          LoggerService.info('✅ Synced User Data to Background Isolate Storage');
+        }
+      } catch (e) {
+        LoggerService.warn('Failed to sync user data from SharedPreferences: $e');
+      }
     } catch (e) {
       LoggerService.warn('StorageService init warning: $e');
     }

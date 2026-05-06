@@ -230,67 +230,86 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
 
   void _setupMethodChannel() {
     platform.setMethodCallHandler((call) async {
-      debugPrint("[OverlayChannel] Method called: ${call.method}");
-      if (call.method == "clearData") {
-        _updateUI(() {
-          number = "Unknown";
-          name = "";
-          contactNameFromPhone = null;
-          status = "Connecting...";
-          isPersonal = true;
-          expiryDate = null;
-          customerDetails = {};
-          _isLookupInProgress = false;
-          _showFullCard = false; 
-          _lastProcessedNumber = null; 
-        });
-      }
-      if (call.method == "updateData" || call.method == "updateLookupResult") {
-        final args = call.arguments;
-        debugPrint("[OverlayChannel] Arguments: $args");
-        if (args is Map && mounted) {
-          final String incomingNo = args['number']?.toString() ?? number;
-          
-          final String cleanNew = incomingNo.replaceAll(RegExp(r'[^0-9]'), '').split('').reversed.take(10).toList().reversed.join();
-          final String cleanOld = number.replaceAll(RegExp(r'[^0-9]'), '').split('').reversed.take(10).toList().reversed.join();
-
+      try {
+        if (call.method == "clearData") {
           _updateUI(() {
-            if (cleanNew != cleanOld && cleanNew.isNotEmpty) {
-              debugPrint("[OverlayChannel] New number detected: $incomingNo");
-              name = "";
-              contactNameFromPhone = args['contactName']?.toString();
-              isPersonal = true;
-              expiryDate = null;
-              customerDetails = {};
-              _isLookupInProgress = false;
-              _showFullCard = false; 
-              number = incomingNo;
-              _performLocalLookup();
-            } else {
-              number = incomingNo;
-              if (args['contactName'] != null) {
-                 contactNameFromPhone = args['contactName'].toString();
-              }
-            }
-            status = args['status'] ?? status;
-            if (args['name'] != null && args['name'].toString().isNotEmpty && args['name'] != "Searching...") {
-              debugPrint("[OverlayChannel] Data received from native: ${args['name']}");
-              name = args['name'];
-              isPersonal = args['isPersonal'] ?? false;
-              expiryDate = args['expiry_date']?.toString();
-              
-              dynamic rawDetails = args['customer_details'];
-              if (rawDetails is Map) {
-                customerDetails = Map<String, dynamic>.from(rawDetails);
-              }
-              _showFullCard = true; 
-            }
+            number = "Unknown";
+            name = "";
+            contactNameFromPhone = null;
+            status = "Connecting...";
+            isPersonal = true;
+            expiryDate = null;
+            customerDetails = {};
+            _isLookupInProgress = false;
+            _showFullCard = false; 
+            _lastProcessedNumber = null; 
           });
-          
-          if (name.isEmpty && number != "Unknown" && number.isNotEmpty && !_isLookupInProgress) {
-            _performLocalLookup();
+          return null;
+        }
+
+        if (call.method == "updateData" || call.method == "updateLookupResult") {
+          final args = call.arguments;
+          debugPrint("[OverlayChannel] Arguments: $args");
+          if (args is Map && mounted) {
+            final String incomingNo = args['number']?.toString() ?? number;
+            
+            final String cleanNew = _normalize(incomingNo);
+            final String cleanOld = _normalize(number);
+
+            final bool hasIncomingName = args['name'] != null && 
+                                        args['name'].toString().isNotEmpty && 
+                                        args['name'] != "Searching...";
+
+            _updateUI(() {
+              if (cleanNew != cleanOld && cleanNew.isNotEmpty) {
+                debugPrint("[OverlayChannel] New number detected: $incomingNo");
+                
+                // 🚀 ALWAYS START WITH BUBBLE for new numbers (User Requirement)
+                _showFullCard = false;
+                _isLookupInProgress = false;
+                
+                // Preserve what we can from args, but keep card hidden for now
+                name = hasIncomingName ? args['name'] : "";
+                isPersonal = args['isPersonal'] ?? true;
+                customerDetails = hasIncomingName ? _parseDetails(args['customer_details']) : {};
+                contactNameFromPhone = args['contactName']?.toString();
+                expiryDate = null;
+                number = incomingNo;
+              } else {
+                // Same number, update status or supplementary details
+                number = incomingNo;
+                if (args['contactName'] != null) {
+                   contactNameFromPhone = args['contactName'].toString();
+                }
+              }
+
+              status = args['status'] ?? status;
+              subDisposition = args['sub_disposition']?.toString();
+              
+              // If data arrives for the current number, update it
+              if (hasIncomingName) {
+                debugPrint("[OverlayChannel] Data received for $number: ${args['name']}");
+                name = args['name'];
+                isPersonal = args['isPersonal'] ?? false;
+                expiryDate = args['expiry_date']?.toString();
+                customerDetails = _parseDetails(args['customer_details']);
+                
+                // Only reveal card if lookup has already completed
+                // Otherwise _performLocalLookup will handle the reveal after its 2.5s window
+                if (_normalize(_lastProcessedNumber ?? "") == cleanNew && !_isLookupInProgress) {
+                  _showFullCard = true;
+                }
+              }
+            });
+            
+            // Trigger local lookup for new numbers
+            if (number != "Unknown" && number.isNotEmpty && !_isLookupInProgress) {
+              _performLocalLookup();
+            }
           }
         }
+      } catch (e, stack) {
+        debugPrint("[OverlayChannel] Error in MethodCallHandler: $e\n$stack");
       }
       return null;
     });
@@ -324,13 +343,18 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
             status = preData['status'] ?? status;
             isPersonal = preData['isPersonal'] ?? isPersonal;
             expiryDate = preData['expiry_date'];
-            if (preData['customer_details'] is Map) {
-              customerDetails = Map<String, dynamic>.from(preData['customer_details']);
+            if (preData['customer_details'] != null) {
+              customerDetails = _parseDetails(preData['customer_details']);
             }
-            _showFullCard = true;
+            // 🚀 Force bubble state even if data is present
+            _showFullCard = false;
+          } else if (nativeNo != null) {
+            number = nativeNo;
           }
         });
-        if (name.isEmpty && number != "Unknown" && number.isNotEmpty && !_isLookupInProgress && number != _lastProcessedNumber) {
+        
+        // 🚀 Always trigger lookup for valid numbers to handle the 2.5s delay and transition
+        if (number != "Unknown" && number.isNotEmpty && !_isLookupInProgress) {
           _performLocalLookup();
         }
       }
@@ -380,7 +404,7 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
       return;
     }
     
-    if (_lastProcessedNumber == lookupNumber && attempt == 1 && _showFullCard) {
+    if (_normalize(_lastProcessedNumber ?? "") == _normalize(lookupNumber) && attempt == 1 && _showFullCard) {
       debugPrint("[OverlayLookup] Number already processed and card shown, skipping.");
       return;
     }
@@ -388,7 +412,7 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
     _isLookupInProgress = true;
     _lastProcessedNumber = lookupNumber;
     
-    // 🚀 Safety Check: Reset and play bubble animation only if initialized
+    // 🚀 ALWAYS reset and play bubble animation for new lookup starts (User Requirement)
     try {
       _bubbleController.reset();
       _bubbleController.forward();
@@ -403,7 +427,11 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
       }
       
       debugPrint("[OverlayLookup] Calling SyncService for: $normalized");
-      // 🕒 DB Fetch
+      
+      // 🧹 CLEAR CACHE: Ensure we don't show "purana record" (old data)
+      _syncSvc.clearCustomerCache(normalized);
+      
+      // 🕒 DB Fetch (Do it in parallel with the enforced bubble delay)
       final result = await _syncSvc.lookupCustomer(normalized).timeout(
         const Duration(seconds: 4),
         onTimeout: () {
@@ -412,7 +440,7 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
         },
       );
       
-      // 🛡️ ENFORCE 2.5-SECOND BUBBLE VISIBILITY
+      // 🛡️ ENFORCE 2.5-SECOND BUBBLE VISIBILITY (Consistency check)
       final elapsed = DateTime.now().difference(startTime);
       if (elapsed.inMilliseconds < 2500) {
         final waitTime = 2500 - elapsed.inMilliseconds;
@@ -430,8 +458,8 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
       
       debugPrint("[OverlayLookup] Result received: ${result != null ? 'DATA FOUND' : 'NULL'}");
       
-      final String currentClean = number.replaceAll(RegExp(r'[^0-9]'), '').split('').reversed.take(10).toList().reversed.join();
-      final String lookupClean = lookupNumber.replaceAll(RegExp(r'[^0-9]'), '').split('').reversed.take(10).toList().reversed.join();
+      final String currentClean = _normalize(number);
+      final String lookupClean = _normalize(lookupNumber);
 
       if (!mounted || (currentClean != lookupClean && lookupClean.isNotEmpty)) {
         debugPrint("[OverlayLookup] Context unmounted or logical number changed ($lookupClean -> $currentClean), aborting UI update.");
@@ -449,32 +477,7 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
           subDisposition = result['sub_disposition']?.toString();
           expiryDate = result['expiry_date']?.toString();
           
-          try {
-            dynamic detailsRaw = result['customer_details'];
-            Map<String, dynamic> parsedDetails = {};
-            
-            if (detailsRaw is String && detailsRaw.isNotEmpty) {
-              parsedDetails = Map<String, dynamic>.from(jsonDecode(detailsRaw));
-            } else if (detailsRaw is Map) {
-              parsedDetails = Map<String, dynamic>.from(detailsRaw);
-            }
-
-            // 🚀 Extract data from nested 'history' based on 'active_details'
-            if (parsedDetails.containsKey('active_details') && parsedDetails.containsKey('history')) {
-              final activeKey = parsedDetails['active_details'];
-              final history = parsedDetails['history'];
-              if (history is Map && history.containsKey(activeKey)) {
-                customerDetails = Map<String, dynamic>.from(history[activeKey]);
-              } else {
-                customerDetails = parsedDetails;
-              }
-            } else {
-              customerDetails = parsedDetails;
-            }
-          } catch (e) {
-            debugPrint("[OverlayLookup] Details parse error: $e");
-            customerDetails = {};
-          }
+          customerDetails = _parseDetails(result['customer_details']);
 
           _isLookupInProgress = false;
           _showFullCard = true; // 🚀 SHOW CARD
@@ -565,16 +568,15 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
                                     gradient: LinearGradient(
                                       begin: Alignment.topLeft,
                                       end: Alignment.bottomRight, 
-                                      colors: status.toLowerCase() == 'rejected'
-                                          ? [const Color(0xFFD32F2F), const Color(0xFFEF5350)] // 🔴 Rejected
+                                      colors: status.toLowerCase() == 'rejected' || status.toLowerCase() == 'junk'
+                                          ? [const Color(0xFFD32F2F), const Color(0xFFEF5350)] // 🔴 Rejected / Junk (Red)
                                           : (status.toLowerCase().contains('followup')
-                                              ? [const Color(0xFFFF9800), const Color(0xFFFFB74D)] // 🟠 Follow Up
-                                              : (status.toLowerCase() == 'closed'
-                                                  ? [const Color(0xFF3F51B5), const Color(0xFF5C6BC0)]
-                                                   // 🟣 Closed
+                                              ? [const Color(0xFFFF9800), const Color(0xFFFFB74D)] // 🟠 Follow Up (Orange)
+                                              : (status.toLowerCase() == 'closed' || status.toLowerCase() == 'won'
+                                                  ? [const Color(0xFF3F51B5), const Color(0xFF5C6BC0)] // 🟣 Closed / Won (Indigo)
                                                   : (isPersonal
-                                                      ? [const Color(0xFF43A047), const Color(0xFF66BB6A)] // 🟢 Personal
-                                                      : [const Color(0xFF4B33E8), const Color(0xFF6A54F0)]))), // 🔵 Customer
+                                                      ? [const Color(0xFF43A047), const Color(0xFF66BB6A)] // 🟢 Personal (Green)
+                                                      : [const Color(0xFF4B33E8), const Color(0xFF6A54F0)]))), // 🔵 Customer (Blue)
                                     ),
                                   ),
                                   child: Column(
@@ -704,12 +706,10 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
                                           ),
                                         ),
                                       ],
-                                      if (status.toLowerCase() == 'rejected')
-                                        _buildFooterMessage("This is a rejected lead or Not Interested", const Color(0xFFD32F2F)),
-                                      if (status.toLowerCase() == 'closed')
-                                        _buildFooterMessage("This lead is already closed", const Color(0xFF3F51B5)),
-                                      if (isPersonal && status.toLowerCase() != 'rejected' && status.toLowerCase() != 'closed')
-                                        _buildFooterMessage("No CRM records found for this number.", Colors.grey),
+                                      if (status.toLowerCase() == 'rejected' || 
+                                          status.toLowerCase() == 'closed' || 
+                                          (isPersonal && status.toLowerCase() != 'rejected' && status.toLowerCase() != 'closed'))
+                                        const SizedBox(height: 10), // Small spacer instead of full footer
                                       // Add spacing to prevent logo overlap if content is short
                                       const SizedBox(height: 20),
                                     ],
@@ -717,25 +717,64 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
                                 ),
                               ],
                             ),
-                            // 🚀 Logo at Bottom Right
+                            // 🚀 Footer Message + Logo at Bottom
                             Positioned(
-                              bottom: 10, // 🚀 Moved slightly down
+                              bottom: 10,
+                              left: 20,
                               right: 10,
-                              child: Opacity(
-                                opacity: 0.7, // 🚀 Faded look
-                                child: Image.asset(
-                                  'assets/images/logo.jpeg',
-                                  height: 28, // 🚀 Increased size
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) => Text(
-                                    "RYNXLY",
-                                    style: TextStyle(
-                                      color: const Color(0xFF3F51B5).withValues(alpha: 0.3),
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  // 📝 Footer Text (Left Aligned)
+                                  Expanded(
+                                    child: () {
+                                      String msg = "";
+                                      Color col = Colors.grey;
+                                      if (status.toLowerCase() == 'rejected') {
+                                        msg = "This lead is Rejected or Not Interested";
+                                        col = const Color(0xFFD32F2F);
+                                      } else if (status.toLowerCase() == 'closed') {
+                                        msg = "This lead is already Closed";
+                                        col = const Color(0xFF3F51B5);
+                                      } else if (isPersonal) {
+                                        msg = "No CRM records found for this number";
+                                        col = Colors.grey.shade500;
+                                      }
+                                      
+                                      if (msg.isEmpty) return const SizedBox.shrink();
+                                      
+                                      return Opacity(
+                                        opacity: 0.9,
+                                        child: Text(
+                                          msg,
+                                          style: TextStyle(
+                                            color: col,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      );
+                                    }(),
+                                  ),
+                                  // 🎨 Logo (Right Aligned)
+                                  Opacity(
+                                    opacity: 0.6,
+                                    child: Image.asset(
+                                      'assets/images/logo.jpeg',
+                                      height: 30,
+                                      fit: BoxFit.contain,
+                                      errorBuilder: (context, error, stackTrace) => Text(
+                                        "RYNXLY",
+                                        style: TextStyle(
+                                          color: const Color(0xFF3F51B5).withValues(alpha: 0.3),
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
+                                ],
                               ),
                             ),
                           ],
@@ -749,22 +788,40 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
           );
   }
 
-  Widget _buildFooterMessage(String message, Color color) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: color,
-            fontSize: 14, // 🚀 Increased size
-            fontWeight: FontWeight.w600,
-            fontStyle: FontStyle.italic,
-          ),
-        ),
-      ),
-    );
+  Map<String, dynamic> _parseDetails(dynamic raw) {
+    if (raw == null) {
+      debugPrint("[OverlayParse] Raw details is null");
+      return {};
+    }
+    Map<String, dynamic> parsed = {};
+    try {
+      if (raw is String && raw.isNotEmpty) {
+        parsed = Map<String, dynamic>.from(jsonDecode(raw));
+      } else if (raw is Map) {
+        parsed = Map<String, dynamic>.from(raw);
+      } else {
+        debugPrint("[OverlayParse] Unknown raw details type: ${raw.runtimeType}");
+      }
+
+      // 🚀 Extract data from nested 'history' based on 'active_details'
+      if (parsed.containsKey('active_details') && parsed.containsKey('history')) {
+        final activeKey = parsed['active_details'];
+        final history = parsed['history'];
+        if (history is Map && history.containsKey(activeKey)) {
+          debugPrint("[OverlayParse] Successfully extracted nested details for key: $activeKey");
+          return Map<String, dynamic>.from(history[activeKey]);
+        }
+      }
+      
+      if (parsed.isEmpty && raw != null) {
+        debugPrint("[OverlayParse] Parsed map is empty but raw data exists");
+      }
+      
+      return parsed;
+    } catch (e) {
+      debugPrint("[OverlayParse] Error parsing details ($raw): $e");
+      return parsed.isNotEmpty ? parsed : {};
+    }
   }
 
   String _formatDate(String? dateStr) {
@@ -774,6 +831,12 @@ class _CallOverlayScreenBodyState extends State<_CallOverlayScreenBody> with Tic
     } catch (e) {
       return dateStr;
     }
+  }
+
+  String _normalize(String input) {
+    if (input.isEmpty || input == "Unknown") return "";
+    final digits = input.replaceAll(RegExp(r'[^0-9]'), '');
+    return digits.length > 10 ? digits.substring(digits.length - 10) : digits;
   }
 
   Widget _buildPulseCloseButton() {

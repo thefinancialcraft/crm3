@@ -31,7 +31,6 @@ class CallBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        Log.d("CallBridgePlugin", "Method call: ${call.method}")
         when (call.method) {
             "updateLookupResult" -> {
                 val args = call.arguments as? Map<String, Any>

@@ -64,7 +64,6 @@ class SyncProvider extends ChangeNotifier {
 
   // Polling timers for real-time updates
   Timer? _refreshTimer;
-  Timer? _simTimer;
 
   SyncProvider() {
     _loadPersistedLogs();
@@ -72,7 +71,6 @@ class SyncProvider extends ChangeNotifier {
     _loadUser();
     _loadSessions();
     loadSimPreference();
-    refreshSims();
 
     // Listen to real-time logs from LogManager
     lm.LogManager().stream.listen((log) {
@@ -88,17 +86,11 @@ class SyncProvider extends ChangeNotifier {
       refreshCounts();
       refreshPersistedLogs();
     });
-
-    // Refresh SIM status every 5 seconds (less frequent to save battery/reduce logs)
-    _simTimer = Timer.periodic(const Duration(milliseconds: 5000), (timer) {
-      refreshSims();
-    });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    _simTimer?.cancel();
     super.dispose();
   }
   bool get isSyncing => _isSyncing;

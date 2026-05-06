@@ -47,12 +47,12 @@ class CallLogService {
 
   /// Places a direct call using native ACTION_CALL
   Future<void> placeDirectCall(String number) async {
-    LoggerService.info("📞 CallLogService: placeDirectCall -> $number");
+    final simId = StorageService.getDefaultSim();
+    final slotIndex = StorageService.getDefaultSimSlot();
+    LoggerService.info("📞 CallLogService: placeDirectCall -> $number | SimId: $simId | Slot: $slotIndex");
     _currentNumber = number;
     currentNumberNotifier.value = number;
     WebBridgeService.notifyCallStatus("connecting", number);
-    final simId = StorageService.getDefaultSim();
-    final slotIndex = StorageService.getDefaultSimSlot();
     try {
       await _nativeChannel.invokeMethod('directCall', {
         'number': number,
@@ -60,7 +60,7 @@ class CallLogService {
         'slotIndex': slotIndex,
       });
     } catch (e) {
-      LoggerService.error("❌ Failed to place direct call", e);
+      LoggerService.error("❌ Failed to place direct call for $number", e);
     }
   }
 

@@ -86,7 +86,7 @@ class SyncService {
   
   final Map<String, Map<String, dynamic>?> _customerCache = {};
   final Map<String, DateTime> _customerCacheTime = {};
-  static const _customerCacheDuration = Duration(hours: 1);
+  static const _customerCacheDuration = Duration(minutes: 15);
   DateTime? _lastLiveUpdate;
   
   void scheduleSyncDebounced({Duration delay = const Duration(seconds: 3)}) {
@@ -109,6 +109,14 @@ class SyncService {
     final bytes = utf8.encode(clean);
     final digest = sha256.convert(bytes);
     return digest.toString();
+  }
+
+  /// Force clear cache for a specific number to ensure fresh lookup
+  void clearCustomerCache(String phoneNo) {
+    final normalized = PhoneUtils.normalize(phoneNo);
+    _customerCache.remove(normalized);
+    _customerCacheTime.remove(normalized);
+    LoggerService.info('🧹 Sync: Cache cleared for $normalized');
   }
 
   // 🌉 ISOLATED BRIDGE: Instance-based stream to prevent global collisions
@@ -450,29 +458,8 @@ class SyncService {
     LoggerService.info('🔍 Sync: Starting deep lookup for hash: $hash (Org: $orgId)');
 
     try {
-      // 🚀 1. Primary Lookup: Customers Table
-      var query = client
-          .from('customers')
-          .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
-          .eq('phone_search_hash', hash);
-      
-      if (orgId != null) {
-        query = query.or('organization_id.eq.$orgId,organization_id.is.null');
-      }
-      
-      final List<dynamic> custResp = await query;
-      
-      if (custResp.isNotEmpty) {
-        LoggerService.info('✅ Sync: Found match in CUSTOMERS table');
-        final match = custResp.first;
-        match['status'] ??= 'Active'; // 🚀 Default for customers
-        _customerCache[normalized] = match;
-        _customerCacheTime[normalized] = DateTime.now();
-        return match;
-      }
-
-      // 🚀 2. Secondary Lookup: Rejected Leads
-      LoggerService.info('🔍 Sync: No match in customers, checking REJECTED_LEADS...');
+      // 🚀 1. Primary Lookup: Rejected Leads (High Priority Terminal Status)
+      LoggerService.info('🔍 Sync: Checking REJECTED_LEADS for hash: $hash');
       var rejQuery = client
           .from('rejected_leads')
           .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
@@ -486,15 +473,15 @@ class SyncService {
       
       if (rejResp.isNotEmpty) {
         LoggerService.info('✅ Sync: Found match in REJECTED_LEADS table');
-        final match = rejResp.first;
-        match['status'] ??= 'Rejected'; // 🚀 Default for rejected_leads
+        final match = Map<String, dynamic>.from(rejResp.first);
+        match['status'] = 'Rejected'; // 🚀 FORCE REJECTED STATUS FOR UI
         _customerCache[normalized] = match;
         _customerCacheTime[normalized] = DateTime.now();
         return match;
       }
 
-      // 🚀 3. Tertiary Lookup: Closed Deals
-      LoggerService.info('🔍 Sync: No match in rejected, checking CLOSED_DEALS...');
+      // 🚀 2. Secondary Lookup: Closed Deals (Won Deals)
+      LoggerService.info('🔍 Sync: Checking CLOSED_DEALS for hash: $hash');
       var closedQuery = client
           .from('closed_deals')
           .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
@@ -508,8 +495,30 @@ class SyncService {
       
       if (closedResp.isNotEmpty) {
         LoggerService.info('✅ Sync: Found match in CLOSED_DEALS table');
-        final match = closedResp.first;
-        match['status'] ??= 'Closed'; // 🚀 Default for closed_deals
+        final match = Map<String, dynamic>.from(closedResp.first);
+        match['status'] = 'Closed'; // 🚀 FORCE CLOSED STATUS FOR UI
+        _customerCache[normalized] = match;
+        _customerCacheTime[normalized] = DateTime.now();
+        return match;
+      }
+
+      // 🚀 3. Tertiary Lookup: Customers Table (Active/General)
+      LoggerService.info('🔍 Sync: Checking CUSTOMERS table for hash: $hash');
+      var query = client
+          .from('customers')
+          .select('id, phone_no, customer_name, organization_id, status, expiry_date, customer_details, utilities, notes, outcome, disposition, sub_disposition')
+          .eq('phone_search_hash', hash);
+      
+      if (orgId != null) {
+        query = query.or('organization_id.eq.$orgId,organization_id.is.null');
+      }
+      
+      final List<dynamic> custResp = await query;
+      
+      if (custResp.isNotEmpty) {
+        LoggerService.info('✅ Sync: Found match in CUSTOMERS table');
+        final match = Map<String, dynamic>.from(custResp.first);
+        match['status'] ??= 'Active'; // 🚀 Default for customers
         _customerCache[normalized] = match;
         _customerCacheTime[normalized] = DateTime.now();
         return match;
@@ -581,6 +590,7 @@ class SyncService {
       LoggerService.ui('🔍 Classifying (Normalized): $normalized');
 
       // 2. Database Lookup
+      clearCustomerCache(normalized);
       customerResult = await lookupCustomer(normalized);
 
       if (customerResult != null) {

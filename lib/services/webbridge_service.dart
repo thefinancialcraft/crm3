@@ -16,6 +16,7 @@ import 'storage_service.dart';
 class WebBridgeService {
   static InAppWebViewController? _controller;
   static bool callAlive = false;
+  static VoidCallback? onCrmActivation;
 
   /// Bridge connection status
   static bool get isConnected => _controller != null;
@@ -184,6 +185,14 @@ class WebBridgeService {
               } else {
                 _ack('call_to_ack', false);
               }
+              break;
+
+            case 'crm_activation':
+              LoggerService.info("🚀 WebBridge: CRM Activation received!");
+              if (onCrmActivation != null) {
+                onCrmActivation!();
+              }
+              _ack('crm_activation_ack', true);
               break;
 
             default:

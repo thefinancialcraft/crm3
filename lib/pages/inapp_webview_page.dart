@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 import '../services/call_log_service.dart';
@@ -16,6 +17,7 @@ import '../services/webbridge_service.dart';
 import '../utils/log_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/update_service.dart';
+import 'crm_init_page.dart';
 
 class InAppWebViewPage extends StatefulWidget {
   const InAppWebViewPage({super.key});
@@ -26,62 +28,131 @@ class InAppWebViewPage extends StatefulWidget {
 
 class _InAppWebViewPageState extends State<InAppWebViewPage> {
   bool _hasInitializedServices = false;
+  bool _isLoading = true;
+  double _progress = 0;
 
   @override
   void initState() {
     super.initState();
+
+    // 🚀 Setup Handshake Callback with Minimum Display Time
+    DateTime startTime = DateTime.now();
+    const minDisplayTime = Duration(milliseconds: 1500);
+
+    WebBridgeService.onCrmActivation = () async {
+      if (mounted && _isLoading) {
+        final elapsed = DateTime.now().difference(startTime);
+        if (elapsed < minDisplayTime) {
+          await Future.delayed(minDisplayTime - elapsed);
+        }
+        if (mounted) {
+          LoggerService.info("🏁 WebView: Handshake success! Hiding loading screen.");
+          setState(() => _isLoading = false);
+        }
+      }
+    };
+
+    // 🚀 6-Second Failsafe Timer
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted && _isLoading) {
+        LoggerService.warn("⏰ WebView: Handshake timeout (6s). Hiding loading screen automatically.");
+        setState(() => _isLoading = false);
+      }
+    });
+
     // 🚀 AUTOMATIC UPDATE CHECK (15s Delay)
-    // Runs once when the WebView page is first created
     LoggerService.info("🚀 Auto-update check scheduled in 15 seconds...");
     Future.delayed(const Duration(seconds: 15), () {
       final globalContext = LoggerService.navKey.currentContext;
       if (globalContext != null && globalContext.mounted) {
         LoggerService.info("🚀 Executing automatic update check (Global Context)...");
         UpdateService.instance.checkForUpdate(globalContext, silent: true);
-      } else {
-        LoggerService.warn("🚀 Auto-update skipped: Global context not available");
       }
     });
   }
+
+  InAppWebViewController? _webViewController;
+  DateTime? _lastBackPressTime;
 
   @override
   Widget build(BuildContext context) {
     final sync = context.read<SyncProvider>();
     return Scaffold(
-        body: SafeArea(
-        child: Stack(
-          children: [
-            InAppWebView(
-              initialUrlRequest: URLRequest(
-                url: WebUri(AppConstants.defaultCrmUrl),
-              ),
-              gestureRecognizers: {
-                Factory<VerticalDragGestureRecognizer>(() => VerticalDragGestureRecognizer()),
-                Factory<HorizontalDragGestureRecognizer>(() => HorizontalDragGestureRecognizer()),
-                Factory<TapGestureRecognizer>(() => TapGestureRecognizer()),
-                Factory<LongPressGestureRecognizer>(() => LongPressGestureRecognizer()),
-              },
-              initialSettings: InAppWebViewSettings(
-                isInspectable: true,
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                mediaPlaybackRequiresUserGesture: false,
-                allowsInlineMediaPlayback: true,
-                transparentBackground: false,
-                disableVerticalScroll: false,
-                disableHorizontalScroll: false,
-                supportZoom: true,
-                builtInZoomControls: true,
-                displayZoomControls: false,
-              ),
-              onWebViewCreated: (c) {
-                LoggerService.ui('WebView created');
-                WebBridgeService.init(c);
-              },
+      backgroundColor: Colors.white,
+      body: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          final controller = _webViewController;
+          
+          // 1. Try to go back in WebView history
+          if (controller != null && await controller.canGoBack()) {
+            await controller.goBack();
+            return;
+          }
+
+          // 2. Double-back logic if at the start of WebView history
+          final now = DateTime.now();
+          if (_lastBackPressTime == null || 
+              now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+            _lastBackPressTime = now;
+          if (!context.mounted) return;
+          final scaffoldMessenger = ScaffoldMessenger.of(context);
+          scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: const Text('Press back again to exit'),
+                  duration: const Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                  width: 200,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              );
+          } else {
+            // Second back press within 2 seconds -> Exit App
+            if (mounted) {
+              SystemNavigator.pop();
+            }
+          }
+        },
+        child: SafeArea(
+          child: Stack(
+            children: [
+              InAppWebView(
+                initialUrlRequest: URLRequest(
+                  url: WebUri(AppConstants.defaultCrmUrl),
+                ),
+                gestureRecognizers: {
+                  Factory<VerticalDragGestureRecognizer>(() => VerticalDragGestureRecognizer()),
+                  Factory<HorizontalDragGestureRecognizer>(() => HorizontalDragGestureRecognizer()),
+                  Factory<TapGestureRecognizer>(() => TapGestureRecognizer()),
+                  Factory<LongPressGestureRecognizer>(() => LongPressGestureRecognizer()),
+                },
+                initialSettings: InAppWebViewSettings(
+                  isInspectable: true,
+                  javaScriptEnabled: true,
+                  domStorageEnabled: true,
+                  databaseEnabled: true,
+                  mediaPlaybackRequiresUserGesture: false,
+                  allowsInlineMediaPlayback: true,
+                  transparentBackground: false,
+                  disableVerticalScroll: false,
+                  disableHorizontalScroll: false,
+                  supportZoom: true,
+                  builtInZoomControls: true,
+                  displayZoomControls: false,
+                ),
+                onWebViewCreated: (c) {
+                  LoggerService.ui('WebView created');
+                  _webViewController = c;
+                  WebBridgeService.init(c);
+                },
               onLoadStart: (c, uri) {
                 LoggerService.ui('WebView load start: ${uri?.toString() ?? ''}');
-                // If it's a deep link (whatsapp/mailto outside http/https), let the device handle it
+                if (mounted) {
+                  setState(() {
+                    // _isLoading = true; // Removed
+                  });
+                }
                 if (uri != null &&
                     ![
                       "http",
@@ -96,15 +167,22 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
                   c.stopLoading();
                 }
               },
+              onProgressChanged: (controller, progress) {
+                if (mounted) {
+                  setState(() {
+                    _progress = progress / 100;
+                  });
+                }
+              },
               shouldOverrideUrlLoading: (controller, navigationAction) async {
                 var uri = navigationAction.request.url;
                 if (uri == null) return NavigationActionPolicy.ALLOW;
-  
+
                 bool isWhatsApp =
                     uri.scheme == 'whatsapp' ||
                     uri.host == 'wa.me' ||
                     uri.host == 'api.whatsapp.com';
-  
+
                 if (isWhatsApp) {
                   try {
                     await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -113,7 +191,7 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
                   }
                   return NavigationActionPolicy.CANCEL;
                 }
-  
+
                 if (![
                   "http",
                   "https",
@@ -139,18 +217,22 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
               onLoadStop: (controller, uri) async {
                 LoggerService.ui('WebView load stop: ${uri?.toString() ?? ''}');
                 sync.addLog(LogCategory.ui, 'Web app loaded');
-  
+                
+                if (mounted) {
+                  setState(() {});
+                }
+
                 if (!mounted) return;
-  
+
                 try {
                   if (!_hasInitializedServices) {
                     _hasInitializedServices = true;
-  
+
                     // Initialize Background Service
                     if (!kIsWeb) {
                       await BackgroundService.setup();
                     }
-  
+
                     // Initialize services
                     await Future.delayed(const Duration(milliseconds: 500));
                     final callSvc = CallLogService();
@@ -164,18 +246,18 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
                       final prov = context.read<SyncProvider>();
                       prov.setCounts(pending: pending, synced: synced);
                     };
-  
+
                     svc.syncPending().then((_) {
                       if (!mounted) return;
                       LoggerService.info('Initial UI syncPending complete');
-                    });
-  
+                    });  
+
                     if (!mounted) return;
-  
+
                     final pending = StorageService.callBucket.length;
                     final synced = StorageService.syncedBucket.length;
                     final deviceId = await DeviceUtils.getDeviceId();
-  
+
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (!mounted) return;
                       final prov = context.read<SyncProvider>();
@@ -183,16 +265,31 @@ class _InAppWebViewPageState extends State<InAppWebViewPage> {
                       prov.setLastSync(DateTime.now());
                       prov.setDeviceId(deviceId);
                     });
-                    // Heartbeat logic or other services can go here
                   }
                 } catch (e) {
                   LoggerService.warn('Initialization flow failed: $e');
                 }
               },
             ),
-          ],
+            
+            // 🚀 Separate Loading Page (Handshake Layer)
+            if (_isLoading)
+              Positioned.fill(
+                child: CrmInitPage(
+                  progress: _progress > 0 ? _progress : null,
+                  message: _progress < 1.0 ? "Initializing..." : "Getting Things Ready...",
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    WebBridgeService.onCrmActivation = null;
+    super.dispose();
   }
 }

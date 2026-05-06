@@ -46,7 +46,15 @@ class _ConsentPageState extends State<ConsentPage> {
                         children: [
                           Image.asset(
                             'assets/images/logo.jpeg',
-                            height: 60,
+                            height: 60, // 🚀 Reduced height
+                            errorBuilder: (context, error, stackTrace) => const Text(
+                              "RYNXLY",
+                              style: TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF4B33E8),
+                              ),
+                            ),
                           ),
                           const SizedBox(height: 12),
                           const Text(

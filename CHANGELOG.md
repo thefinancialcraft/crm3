@@ -1,9 +1,25 @@
 ﻿# Project Changelog
 
+## [2026-05-07 03:15]
+- fix glitch in overlay while calling with flutter
+
+
+## [2026-05-07 00:24]
+- every thing is working fine 
+
+
+## [2026-05-06 14:45]
+- sim detection error fix
+
+
+## [2026-05-06 04:21]
+- at this time overlay is completely and fully working with every feature
+
+
 ## [2026-05-06 03:14]
-- card now fully working -- issue only customer details are not visible
+- card now fully working -- issue only customer details are not visible 
 
-
+  
 ## [2026-05-06 02:46]
 - now card is working fine without blocking screen card sliding estlished working also fine
 
@@ -25,6 +41,10 @@ avi yha do isuee hai
 
 ## [2026-05-05 23:57]
 - save first backup 1. app at this time fine working with bubble and display card only one issue customer details are not updating
+
+
+
+
 
 
 

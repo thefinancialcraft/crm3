@@ -218,7 +218,7 @@ class OverlayManager private constructor(private val context: Context) {
             private var isDragging = false
             private var isVerticalDrag = false // 🚀 Flag to lock axis
             private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-            private val dismissThreshold = displayMetrics.widthPixels * 0.45f
+            private val dismissThreshold = displayMetrics.widthPixels * 0.35f
 
             override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
                 when (event.action) {

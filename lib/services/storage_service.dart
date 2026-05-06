@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'logger_service.dart';
 
 class StorageService {
   static const callBucketBox = 'callBucket';
@@ -107,6 +110,15 @@ class StorageService {
       if (payload['organization_id'] != null) {
         await meta.put('lastOrgId', payload['organization_id']);
       }
+      
+      // Save stringified JSON to SharedPreferences for robust cross-isolate access (Background Service)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('bg_user_info', jsonEncode(payload));
+        await prefs.setBool('bg_is_logged_in', payload['login'] ?? true);
+      } catch (e) {
+        LoggerService.warn('Failed to save user session to SharedPreferences: $e');
+      }
     } catch (_) {}
   }
 
@@ -116,6 +128,14 @@ class StorageService {
       await meta.delete('userInfo');
       await meta.delete('isLoggedIn');
       await meta.delete('lastOrgId');
+      
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('bg_user_info');
+        await prefs.remove('bg_is_logged_in');
+      } catch (e) {
+        LoggerService.warn('Failed to clear SharedPreferences on logout: $e');
+      }
       // Optional: Clear temporary buckets if needed
       // await callBucket.clear(); 
     } catch (_) {}

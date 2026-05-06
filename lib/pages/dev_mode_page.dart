@@ -419,8 +419,8 @@ class _OverviewScreenState extends State<_OverviewScreen> {
     return InkWell(
       onTap: () => Navigator.push(
         context, 
-        MaterialPageRoute(builder: (_) => const SimSelectionPage(isFromSettings: true))
-      ).then((_) => sync.refreshSims()),
+        MaterialPageRoute(builder: (_) => const SimSelectionPage(isFromSettings: true)),
+      ),
       borderRadius: BorderRadius.circular(24),
       child: Container(
         padding: const EdgeInsets.all(24),

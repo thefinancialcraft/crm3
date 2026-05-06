@@ -9,6 +9,7 @@ import 'pages/inapp_webview_page.dart';
 import 'pages/consent_page.dart';
 import 'widgets/connection_wrapper.dart';
 import 'services/logger_service.dart';
+import 'pages/crm_init_page.dart';
 
 class App extends StatefulWidget {
   const App({super.key});
@@ -86,12 +87,8 @@ class _AppState extends State<App> {
 
   Widget _buildHome() {
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFF4B33E8),
-          ),
-        ),
+      return const CrmInitPage(
+        message: "Starting Rynxly...",
       );
     }
 
